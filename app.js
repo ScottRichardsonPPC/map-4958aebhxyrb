@@ -21,6 +21,21 @@
   const bestLayer = L.layerGroup();
   window.PPCMAP = { map, bestLayer };
   L.control.layers({ 'Street map': street, 'Satellite': sat, 'Topographic': topo }, { 'Best-of photos (4–5★)': bestLayer }, { position: 'topright', collapsed: false }).addTo(map);
+  const LocateCtl = L.Control.extend({
+    options: { position: 'topleft' },
+    onAdd: function () {
+      const d = L.DomUtil.create('div', 'leaflet-bar leaflet-control ppc-locate');
+      const a = L.DomUtil.create('a', '', d);
+      a.href = '#'; a.role = 'button';
+      a.title = 'Find my location. Your location is never stored or sent anywhere.';
+      a.setAttribute('aria-label', 'Find my location. Your location is never stored or sent anywhere.');
+      a.textContent = '📍';
+      L.DomEvent.disableClickPropagation(d);
+      L.DomEvent.on(a, 'click', ev => { L.DomEvent.preventDefault(ev); locateMe(); });
+      return d;
+    }
+  });
+  map.addControl(new LocateCtl());
   const legend = L.control({ position: 'bottomleft' });
   legend.onAdd = function () {
     const d = L.DomUtil.create('div', 'best-legend');
@@ -31,7 +46,8 @@
   legend.addTo(map);
   const allRenderer = L.canvas({ padding: 0.5 });
   const allLayer = L.layerGroup().addTo(map);
-  let FL = [], ZONES = [], pick = null, pickMarker = null, circle = null, resLayer = L.layerGroup().addTo(map), hiLayer = L.layerGroup().addTo(map), phLayer = L.layerGroup().addTo(map), lastHits = [], selId = null, browseAll = false;
+  let FL = [], ZONES = [], pick = null, pickMarker = null, circle = null, hereMarker = null, resLayer = L.layerGroup().addTo(map), hiLayer = L.layerGroup().addTo(map), phLayer = L.layerGroup().addTo(map), lastHits = [], selId = null, browseAll = false, ignoreHash = false, lastCopied = '';
+  const SHARE_ICO = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92Z"/></svg>';
   const photoFlights = new Map();   // photo key -> flights (a post/photo can appear on more than one)
   const TAP_PX = 20;   // generous tap target for photo pins, including on a phone
   const TRACK_PX = 18;   // generous tap target for tracks, including on a phone
@@ -99,13 +115,101 @@
     });
     syncColorUi();
     setStatus(`<b>${FL.length}</b> GPS-tracked flights loaded. Search an address or tap the map, or show all tracks for the selected years.`);
-    const h = new URLSearchParams(location.hash.slice(1));
-    if (h.get('lat') && h.get('lon')) setPick(+h.get('lat'), +h.get('lon'), true);
+    applyHash();
+    window.addEventListener('hashchange', () => { if (!ignoreHash) applyHash(); });
   }).catch(() => setStatus('Could not load the flight data. Please reload the page.'));
 
   // ---------- helpers
   const setStatus = h => { $('status').innerHTML = h; };
   const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  function pageBase() {
+    const path = location.pathname.endsWith('/') ? location.pathname : location.pathname.replace(/[^/]+$/, '');
+    return location.origin + path;
+  }
+  function flightShareUrl(f) { return pageBase() + '#f=' + encodeURIComponent(f.id); }
+  function setHash(s) {
+    ignoreHash = true;
+    try { history.replaceState(null, '', s); } catch (_) {}
+    setTimeout(() => { ignoreHash = false; }, 0);
+  }
+  function toast(msg) {
+    let el = document.getElementById('toast');
+    if (!el) { el = document.createElement('div'); el.id = 'toast'; el.className = 'toast'; el.setAttribute('role', 'status'); document.body.appendChild(el); }
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => el.classList.remove('show'), 1800);
+  }
+  function copyText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(text);
+    return new Promise((resolve, reject) => {
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.left = '-9999px';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy') ? resolve() : reject(new Error('copy failed')); }
+      catch (e) { reject(e); }
+      finally { ta.remove(); }
+    });
+  }
+  function shareLink(url, title) {
+    lastCopied = url;
+    const payload = { title: title || 'Scott’s powered parachute flight', text: title || '', url };
+    if (navigator.share) {
+      return navigator.share(payload).catch(err => {
+        if (err && err.name === 'AbortError') return;
+        return copyText(url).then(() => toast('Link copied')).catch(() => setStatus('Could not copy the link. You can copy it from the address bar.'));
+      });
+    }
+    return copyText(url).then(() => toast('Link copied')).catch(() => setStatus('Could not copy the link. You can copy it from the address bar.'));
+  }
+  function shareIco(url, label) {
+    if (!url) return '';
+    return ` <button type="button" class="share-ico" data-share-url="${esc(url)}" title="Share ${label}" aria-label="Share ${label}">${SHARE_ICO}</button>`;
+  }
+  function shareFlightBtn(f) {
+    return `<button type="button" class="share-flight" data-share="flight" data-id="${esc(f.id)}" title="Share a link to this flight">Share</button>`;
+  }
+  function vidsHtml(f) {
+    return (f.v || []).map(v => `<div class="vid">🎥 <a href="${esc(v.u)}" target="_blank" rel="noopener">${esc(v.t)}</a>${shareIco(v.u, 'this video')}${v.c === 'low' ? ' <span class="conf">(possible match)</span>' : ''}<span class="note">${NOTE}</span></div>`).join('');
+  }
+  function fbLink(url, text) {
+    if (!url) return '';
+    return `<a href="${esc(url)}" target="_blank" rel="noopener">${text}</a>${shareIco(url, 'this Facebook post')}`;
+  }
+  function openFlightLink(id) {
+    if (!id) { setStatus('That flight link is missing a flight. Search an address or tap the map, or turn on all tracks.'); return false; }
+    const f = FL.find(x => x.id === id);
+    if (!f) { setStatus('Couldn’t find that flight. It may have been removed, or the link may be incomplete.'); return false; }
+    browseAll = false;
+    presentFlights([f], `Showing the shared flight, ${fmtDate(f.d)}.`, { fit: true });
+    return true;
+  }
+  function applyHash() {
+    const raw = location.hash.replace(/^#/, '');
+    if (!raw) return;
+    const h = new URLSearchParams(raw);
+    if (/(?:^|&)f=/.test(raw)) { openFlightLink(h.get('f')); return; }
+    let la = h.get('lat'), lo = h.get('lon');
+    const p = h.get('p');
+    if (p && p.indexOf(',') >= 0) { const parts = p.split(','); la = parts[0]; lo = parts[1]; }
+    if (la && lo && isFinite(+la) && isFinite(+lo)) setPick(+la, +lo, true);
+  }
+  function locateMe() {
+    if (!navigator.geolocation) return setStatus('Your browser does not share location. Search an address or tap the map instead.');
+    setStatus('Finding your location… Your location is never stored or sent anywhere.');
+    navigator.geolocation.getCurrentPosition(pos => {
+      const la = pos.coords.latitude, lo = pos.coords.longitude;
+      const icon = L.divIcon({ className: 'here-marker', html: '<span class="here-dot"></span><span class="here-ring"></span>', iconSize: [24, 24], iconAnchor: [12, 12] });
+      if (hereMarker) hereMarker.setLatLng([la, lo]).setIcon(icon);
+      else hereMarker = L.marker([la, lo], { icon, zIndexOffset: 1200, keyboard: false }).bindTooltip('You are here', { direction: 'top' }).addTo(map);
+      setPick(la, lo, true);
+    }, err => {
+      const code = err && err.code;
+      if (code === 1) setStatus('Location permission was denied. You can still search an address or tap the map. Your location is never stored or sent anywhere.');
+      else if (code === 3) setStatus('Location is taking too long. Search an address or tap the map instead.');
+      else setStatus('Could not get your location. Search an address or tap the map instead. Your location is never stored or sent anywhere.');
+    }, { enableHighAccuracy: true, timeout: 10000 });
+  }
   const hav = (a, b, c, d) => { const r = Math.PI / 180, x = Math.sin((c - a) * r / 2) ** 2 + Math.cos(a * r) * Math.cos(c * r) * Math.sin((d - b) * r / 2) ** 2; return 2 * 6371000 * Math.asin(Math.sqrt(x)); };
   const inZone = (la, lo) => ZONES.length > 0 && ZONES.some(z => hav(la, lo, z[0], z[1]) < z[2] * MI);
   const fmtDate = d => new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
@@ -164,20 +268,19 @@
     const st = f.st, mi = st.dist / MI, durH = (st.t1 - st.t0) / 3600;
     const dur = durH >= 1 ? `${durH.toFixed(1)} h` : `${Math.max(1, Math.round((st.t1 - st.t0) / 60))} min`;
     const ht = !(f.agl && st.hasAg) ? '' : (st.maxAg < 100 ? ' · max height under 100 ft' : ` · max about ${(Math.round(st.maxAg / 50) * 50).toLocaleString()} ft up`);
-    const vids = (f.v || []).map(v => `<div class="vid">🎥 <a href="${esc(v.u)}" target="_blank" rel="noopener">${esc(v.t)}</a>${v.c === 'low' ? ' <span class="conf">(possible match)</span>' : ''}<span class="note">${NOTE}</span></div>`).join('');
     let ph = '';
     if ((f.ph || []).length) {
       ph = `<div class="photos">Facebook post${f.ph.length > 1 ? 's' : ''}: ` +
-        f.ph.map(p => `<a href="${esc(p.u)}" target="_blank" rel="noopener">${fmtDate(p.pd)}</a> (${p.n} photo${p.n > 1 ? 's' : ''})`).join(' · ') + '</div>';
+        f.ph.map(p => fbLink(p.u, `${fmtDate(p.pd)}`) + ` (${p.n} photo${p.n > 1 ? 's' : ''})`).join(' · ') + '</div>';
     }
-    return `<div class="flight-pop"><b>${fmtDate(f.d)}</b><br>${fmtTime(st.t0)} – ${fmtTime(st.t1)} ET · ${dur} · ${mi.toFixed(1)} mi${ht}<br>${esc(f.ac)} · ${esc(f.n)}${vids}${ph}</div>`;
+    return `<div class="flight-pop"><b>${fmtDate(f.d)}</b> ${shareFlightBtn(f)}<br>${fmtTime(st.t0)} – ${fmtTime(st.t1)} ET · ${dur} · ${mi.toFixed(1)} mi${ht}<br>${esc(f.ac)} · ${esc(f.n)}${vidsHtml(f)}${ph}</div>`;
   }
 
   function setPick(la, lo, fit) {
     browseAll = false;
     pick = [la, lo];
     if (!pickMarker) pickMarker = L.marker(pick).addTo(map); else pickMarker.setLatLng(pick);
-    history.replaceState(null, '', `#lat=${la.toFixed(5)}&lon=${lo.toFixed(5)}`);
+    setHash('#lat=' + la.toFixed(5) + '&lon=' + lo.toFixed(5));
     run(fit);
   }
 
@@ -202,7 +305,7 @@
     lastHits.forEach(({ f, c }) => {
       const li = document.createElement('li'); li.dataset.id = f.id;
       const ht = !(f.agl && isFinite(c.ag)) ? 'height not available' : c.ag < 100 ? 'under 100 ft up' : `about ${(Math.round(c.ag / 50) * 50).toLocaleString()} ft up`;
-      const vids = f.v.map(v => `<div class="vid">🎥 <a href="${esc(v.u)}" target="_blank" rel="noopener">${esc(v.t)}</a>${v.c === 'low' ? ' <span class="conf">(possible match)</span>' : ''}<span class="note">${NOTE}</span></div>`).join('');
+      const vids = vidsHtml(f);
       const near = f.pp.filter(p => hav(p.la, p.lo, pick[0], pick[1]) <= rM).sort((a, b) => hav(a.la, a.lo, pick[0], pick[1]) - hav(b.la, b.lo, pick[0], pick[1]));
       near.slice(0, 60).forEach(p => photoPin(p, phLayer, 5, f));
       let ph = '';
@@ -215,15 +318,15 @@
         }
         ph += `<div class="photos">📷 <b>${near.length} photo${near.length > 1 ? 's' : ''} taken within ${$('radius').selectedOptions[0].textContent}</b>: ` +
           near.slice(0, 6).map(p => `${fmtTime(p.t)} (${fmtDist(hav(p.la, p.lo, pick[0], pick[1]))})`).join(' · ') + (near.length > 6 ? ` · +${near.length - 6} more on the map` : '') +
-          '<br>' + postLinks.map(u => `<a href="${esc(u)}" target="_blank" rel="noopener">View Facebook post</a>`).join(' · ') + '</div>';
+          '<br>' + postLinks.map(u => fbLink(u, 'View Facebook post')).join(' · ') + '</div>';
       }
-      if ((f.ph || []).length) ph += `<div class="photos">Facebook photo post${f.ph.length > 1 ? 's' : ''} from this flight: ` + f.ph.slice(0, 4).map(p => `<a href="${esc(p.u)}" target="_blank" rel="noopener">${fmtDate(p.pd)}</a> (${p.n} photo${p.n > 1 ? 's' : ''})`).join(' · ') + (f.ph.length > 4 ? ` · +${f.ph.length - 4} more` : '') + '</div>';
+      if ((f.ph || []).length) ph += `<div class="photos">Facebook photo post${f.ph.length > 1 ? 's' : ''} from this flight: ` + f.ph.slice(0, 4).map(p => fbLink(p.u, fmtDate(p.pd)) + ` (${p.n} photo${p.n > 1 ? 's' : ''})`).join(' · ') + (f.ph.length > 4 ? ` · +${f.ph.length - 4} more` : '') + '</div>';
       if (f.lr) ph += `<div class="photos lr">🖼️ ${f.lr.n.toLocaleString()} photo${f.lr.n > 1 ? 's' : ''} in Scott's photo library from this flight` + (f.lr.np ? ` (${f.lr.np} posted)` : '') + (f.bp.length ? `, ${f.bp.length} best-of (4–5★, posted) shown on the map when selected` : '') +
         (f.lr.lab ? ` · ${esc(f.lr.lab)}` : '') + (f.lr.sub.length ? `<br><span class="note">Possible subjects (a guess from the camera's direction): ${f.lr.sub.map(esc).join(', ')}</span>` : '') + '</div>';
-      li.innerHTML = `<div class="r1"><span>${fmtDate(f.d)}</span><span>${fmtDist(c.d)} away</span></div>
+      li.innerHTML = `<div class="r1"><span>${fmtDate(f.d)}</span><span>${fmtDist(c.d)} away ${shareFlightBtn(f)}</span></div>
         <div class="r2">Closest about ${fmtTime(c.t)} ET · ${ht}</div>
         <div class="r2">${esc(f.ac)} · ${esc(f.n)}</div>${vids}${ph}`;
-      li.addEventListener('click', e => { if (e.target.tagName !== 'A') select(f.id); });
+      li.addEventListener('click', e => { if (e.target.closest('a, button')) return; select(f.id); });
       frag.appendChild(li);
       const col = colorForYear(f.y);
       f.segs.forEach(g => L.polyline([...g.la].map((a, i) => [a, g.lo[i]]), { color: col, weight: 2, opacity: 0.55, interactive: false }).addTo(resLayer));
@@ -245,6 +348,7 @@
   function highlightFlight(f, c, opts) {
     const fit = !opts || opts.fit !== false;
     selId = f.id;
+    setHash('#f=' + encodeURIComponent(f.id));
     hiLayer.clearLayers();
     document.querySelectorAll('#results li').forEach(li => li.classList.toggle('sel', li.dataset.id === f.id));
     const row = document.querySelector('#results li[data-id="' + (window.CSS && CSS.escape ? CSS.escape(f.id) : f.id.replace(/"/g, '')) + '"]');
@@ -473,7 +577,7 @@
       const li = document.createElement('li');
       li.dataset.id = f.id;
       li.innerHTML = flightCardHtml(f, null);
-      li.addEventListener('click', e => { if (e.target.tagName !== 'A') select(f.id); });
+      li.addEventListener('click', e => { if (e.target.closest('a, button')) return; select(f.id); });
       frag.appendChild(li);
     });
     $('results').appendChild(frag);
@@ -489,7 +593,7 @@
     const li = document.createElement('li');
     li.dataset.id = f.id;
     li.innerHTML = flightCardHtml(f, c && isFinite(c.d) ? c : null);
-    li.addEventListener('click', e => { if (e.target.tagName !== 'A') select(f.id); });
+    li.addEventListener('click', e => { if (e.target.closest('a, button')) return; select(f.id); });
     const ol = $('results');
     ol.insertBefore(li, ol.firstChild);
   }
@@ -504,17 +608,17 @@
     const mi = (st.dist / MI).toFixed(1) + ' mi';
     const htC = (c && f.agl && isFinite(c.ag)) ? (c.ag < 100 ? 'under 100 ft up' : `about ${(Math.round(c.ag / 50) * 50).toLocaleString()} ft up`) : '';
     const htF = !(f.agl && st.hasAg) ? '' : (st.maxAg < 100 ? 'max height under 100 ft' : `max about ${(Math.round(st.maxAg / 50) * 50).toLocaleString()} ft up`);
-    const vids = (f.v || []).map(v => `<div class="vid">🎥 <a href="${esc(v.u)}" target="_blank" rel="noopener">${esc(v.t)}</a>${v.c === 'low' ? ' <span class="conf">(possible match)</span>' : ''}<span class="note">${NOTE}</span></div>`).join('');
+    const vids = vidsHtml(f);
     let ph = '';
-    if ((f.ph || []).length) ph += `<div class="photos">Facebook photo post${f.ph.length > 1 ? 's' : ''} from this flight: ` + f.ph.slice(0, 4).map(p => `<a href="${esc(p.u)}" target="_blank" rel="noopener">${fmtDate(p.pd)}</a> (${p.n} photo${p.n > 1 ? 's' : ''})`).join(' · ') + (f.ph.length > 4 ? ` · +${f.ph.length - 4} more` : '') + '</div>';
+    if ((f.ph || []).length) ph += `<div class="photos">Facebook photo post${f.ph.length > 1 ? 's' : ''} from this flight: ` + f.ph.slice(0, 4).map(p => fbLink(p.u, fmtDate(p.pd)) + ` (${p.n} photo${p.n > 1 ? 's' : ''})`).join(' · ') + (f.ph.length > 4 ? ` · +${f.ph.length - 4} more` : '') + '</div>';
     if (f.lr) ph += `<div class="photos lr">🖼️ ${f.lr.n.toLocaleString()} photo${f.lr.n > 1 ? 's' : ''} in Scott's photo library from this flight` + (f.lr.np ? ` (${f.lr.np} posted)` : '') + (f.bp.length ? `, ${f.bp.length} best-of (4–5★, posted) shown on the map when selected` : '') +
       (f.lr.lab ? ` · ${esc(f.lr.lab)}` : '') + (f.lr.sub && f.lr.sub.length ? `<br><span class="note">Possible subjects (a guess from the camera's direction): ${f.lr.sub.map(esc).join(', ')}</span>` : '') + '</div>';
     if (c && isFinite(c.d)) {
-      return `<div class="r1"><span>${fmtDate(f.d)}</span><span>${fmtDist(c.d)} away</span></div>
+      return `<div class="r1"><span>${fmtDate(f.d)}</span><span>${fmtDist(c.d)} away ${shareFlightBtn(f)}</span></div>
         <div class="r2">Closest about ${fmtTime(c.t)} ET · ${htC || 'height not available'}</div>
         <div class="r2">${esc(f.ac)} · ${esc(f.n)}</div>${vids}${ph}`;
     }
-    return `<div class="r1"><span>${fmtDate(f.d)}</span><span>${mi}</span></div>
+    return `<div class="r1"><span>${fmtDate(f.d)}</span><span>${mi} ${shareFlightBtn(f)}</span></div>
       <div class="r2">${fmtTime(st.t0)} – ${fmtTime(st.t1)} ET · ${dur}${htF ? ' · ' + htF : ''}</div>
       <div class="r2">${esc(f.ac)} · ${esc(f.n)}</div>${vids}${ph}`;
   }
@@ -531,7 +635,7 @@
       const li = document.createElement('li');
       li.dataset.id = f.id;
       li.innerHTML = flightCardHtml(f, c && isFinite(c.d) ? c : null);
-      li.addEventListener('click', e => { if (e.target.tagName !== 'A') select(f.id); });
+      li.addEventListener('click', e => { if (e.target.closest('a, button')) return; select(f.id); });
       frag.appendChild(li);
     });
     $('results').appendChild(frag);
@@ -572,7 +676,7 @@
   }
   function photoPin(p, layer, r, f) {
     const m = L.circleMarker([p.la, p.lo], { radius: r, color: '#7b2cbf', weight: 1.5, fillColor: '#c77dff', fillOpacity: 0.9 })
-      .bindPopup(`📷 Photo taken about ${fmtTime(p.t)} ET, ${new Date(p.t * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' })}<br><a href="${esc(photoUrl(p))}" target="_blank" rel="noopener">View Facebook post</a>`).addTo(layer);
+      .bindPopup(`📷 Photo taken about ${fmtTime(p.t)} ET, ${new Date(p.t * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' })}<br>${fbLink(photoUrl(p), 'View Facebook post')}`).addTo(layer);
     m._ppc = { kind: 'photo', p, flights: f ? [f] : [] };
     m.on('click', e => { L.DomEvent.stopPropagation(e); showPhotoFlight(m); });
     return m;
@@ -589,7 +693,7 @@
     const m = L.circleMarker([p.la, p.lo], bestStyle(p))
       .bindPopup(`⭐ Best-of photo (${label}), about ${fmtTime(p.t)} ET, ${d}<br>Aircraft position when taken${bits ? ' · ' + bits : ''}` +
         (p.sub.length ? `<br><i>Possible subjects (guess): ${p.sub.map(esc).join(', ')}</i>` : '') +
-        (p.u ? `<br><a href="${esc(p.u)}" target="_blank" rel="noopener">View Facebook post</a>` : '<br>Not posted online') + `<br><span style="color:#666">${esc(f.ac)} flight, ${fmtDate(f.d)}</span>`).addTo(layer);
+        (p.u ? `<br>${fbLink(p.u, 'View Facebook post')}` : '<br>Not posted online') + `<br><span style="color:#666">${esc(f.ac)} flight, ${fmtDate(f.d)}</span>`).addTo(layer);
     m._ppc = { kind: 'best', p, flights: f ? [f] : [] };
     m.on('click', e => { L.DomEvent.stopPropagation(e); showPhotoFlight(m); });
     return m;
@@ -641,11 +745,21 @@
     if (hit) { cache.set(q, hit); setPick(hit[0], hit[1], true); }
     else setStatus(ok ? 'No match for that address. Try adding the town, or tap the map.' : 'Address search is unavailable right now. You can still tap the map.');
   });
-  $('loc').addEventListener('click', () => {
-    if (!navigator.geolocation) return setStatus('Your browser does not share location. Tap the map instead.');
-    setStatus('Finding your location…');
-    navigator.geolocation.getCurrentPosition(p => setPick(p.coords.latitude, p.coords.longitude, true), () => setStatus('Could not get your location. Search an address or tap the map.'), { enableHighAccuracy: true, timeout: 10000 });
+  $('loc').addEventListener('click', locateMe);
+  document.addEventListener('click', e => {
+    const btn = e.target.closest('[data-share], [data-share-url]');
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (btn.getAttribute('data-share') === 'flight') {
+      const id = btn.getAttribute('data-id');
+      const f = FL.find(x => x.id === id);
+      if (f) shareLink(flightShareUrl(f), 'Scott’s flight on ' + fmtDate(f.d));
+      return;
+    }
+    const url = btn.getAttribute('data-share-url');
+    if (url) shareLink(url, btn.getAttribute('aria-label') || 'Shared link');
   });
-  window.__site = { setPick, select, hits: () => lastHits, setAllTracks, drawAllTracks, setColorMode: m => { colorMode = m === 'year' ? 'year' : 'single'; applyColorChange(); }, colorMode: () => colorMode, allOn: () => allOn, setYearSelection, yearsOn: () => [...yearsOn].sort((a, b) => a - b), nearestPin, showPhotoFlight, showPhotoAt: (la, lo) => { const hit = nearestPin(L.latLng(la, lo)); if (hit) showPhotoFlight(hit.m); return hit && { d: hit.d, kind: hit.m._ppc && hit.m._ppc.kind, id: ((hit.m._ppc.flights||[])[0]||{}).id }; }, nearestTrack, selectTrackFromMap, listSelectedYearFlights, browseAll: () => browseAll, selectTrackAt: (la, lo) => { const t = nearestTrack(L.latLng(la, lo)); if (t) selectTrackFromMap(t.f); return t && { d: t.d, id: t.f.id }; } };
+  window.__site = { setPick, select, hits: () => lastHits, setAllTracks, drawAllTracks, setColorMode: m => { colorMode = m === 'year' ? 'year' : 'single'; applyColorChange(); }, colorMode: () => colorMode, allOn: () => allOn, setYearSelection, yearsOn: () => [...yearsOn].sort((a, b) => a - b), nearestPin, showPhotoFlight, showPhotoAt: (la, lo) => { const hit = nearestPin(L.latLng(la, lo)); if (hit) showPhotoFlight(hit.m); return hit && { d: hit.d, kind: hit.m._ppc && hit.m._ppc.kind, id: ((hit.m._ppc.flights||[])[0]||{}).id }; }, nearestTrack, selectTrackFromMap, listSelectedYearFlights, browseAll: () => browseAll, selectTrackAt: (la, lo) => { const t = nearestTrack(L.latLng(la, lo)); if (t) selectTrackFromMap(t.f); return t && { d: t.d, id: t.f.id }; }, openFlightLink, applyHash, flightShareUrl, shareLink, locateMe, lastCopied: () => lastCopied, hereMarker: () => hereMarker };
   syncColorUi();
 })();
