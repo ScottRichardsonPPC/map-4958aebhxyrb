@@ -31,9 +31,10 @@
   legend.addTo(map);
   const allRenderer = L.canvas({ padding: 0.5 });
   const allLayer = L.layerGroup().addTo(map);
-  let FL = [], ZONES = [], pick = null, pickMarker = null, circle = null, resLayer = L.layerGroup().addTo(map), hiLayer = L.layerGroup().addTo(map), phLayer = L.layerGroup().addTo(map), lastHits = [], selId = null;
+  let FL = [], ZONES = [], pick = null, pickMarker = null, circle = null, resLayer = L.layerGroup().addTo(map), hiLayer = L.layerGroup().addTo(map), phLayer = L.layerGroup().addTo(map), lastHits = [], selId = null, browseAll = false;
   const photoFlights = new Map();   // photo key -> flights (a post/photo can appear on more than one)
   const TAP_PX = 20;   // generous tap target for photo pins, including on a phone
+  const TRACK_PX = 18;   // generous tap target for tracks, including on a phone
   const yearsOn = new Set();
   let allOn = false, colorMode = 'single', trackColor = DEFAULT_COLOR, yearColors = Object.assign({}, YEAR_DEFAULTS);
 
@@ -173,6 +174,7 @@
   }
 
   function setPick(la, lo, fit) {
+    browseAll = false;
     pick = [la, lo];
     if (!pickMarker) pickMarker = L.marker(pick).addTo(map); else pickMarker.setLatLng(pick);
     history.replaceState(null, '', `#lat=${la.toFixed(5)}&lon=${lo.toFixed(5)}`);
@@ -245,6 +247,8 @@
     selId = f.id;
     hiLayer.clearLayers();
     document.querySelectorAll('#results li').forEach(li => li.classList.toggle('sel', li.dataset.id === f.id));
+    const row = document.querySelector('#results li[data-id="' + (window.CSS && CSS.escape ? CSS.escape(f.id) : f.id.replace(/"/g, '')) + '"]');
+    if (row && row.scrollIntoView) row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     const lines = f.segs.map(g => L.polyline([...g.la].map((a, i) => [a, g.lo[i]]), { color: '#f28c18', weight: 4, opacity: 0.95 }).addTo(hiLayer));
     if (c && isFinite(c.d) && isFinite(c.la) && isFinite(c.lo)) {
       L.circleMarker([c.la, c.lo], { radius: 6, color: '#b3261e', fillColor: '#fff', fillOpacity: 1, weight: 3 }).bindTooltip(`Closest: ${fmtDist(c.d)}, about ${fmtTime(c.t)} ET`).addTo(hiLayer);
@@ -295,7 +299,9 @@
           if (hit) {
             map.closePopup();
             showPhotoFlight(hit.m);
+            return;
           }
+          selectTrackFromMap(f);
         });
         pl.addTo(allLayer);
         lines.push(pl);
@@ -309,13 +315,36 @@
     }
   }
 
+  function clearPick() {
+    pick = null;
+    if (pickMarker) { pickMarker.remove(); pickMarker = null; }
+    if (circle) { circle.remove(); circle = null; }
+    resLayer.clearLayers();
+    phLayer.clearLayers();
+    try {
+      const u = location.pathname + location.search;
+      if (location.hash) history.replaceState(null, '', u);
+    } catch (_) {}
+  }
   function setAllTracks(on, fit) {
     allOn = !!on;
     const btn = $('alltracks');
     if (btn) { btn.setAttribute('aria-pressed', allOn ? 'true' : 'false'); btn.classList.toggle('on', allOn); }
-    if (!allOn) allLayer.clearLayers();
-    drawAllTracks(fit && allOn && !pick);
-    if (!allOn && !pick && FL.length) setStatus(`<b>${FL.length}</b> GPS-tracked flights loaded. Search an address or tap the map, or show all tracks for the selected years.`);
+    if (!allOn) {
+      allLayer.clearLayers();
+      const wasBrowse = browseAll;
+      browseAll = false;
+      if (pick) run(false);
+      else {
+        if (wasBrowse) { lastHits = []; selId = null; $('results').innerHTML = ''; hiLayer.clearLayers(); }
+        if (FL.length) setStatus(`<b>${FL.length}</b> GPS-tracked flights loaded. Search an address or tap the map, or show all tracks for the selected years.`);
+      }
+      return;
+    }
+    browseAll = true;
+    clearPick();
+    drawAllTracks(fit);
+    listSelectedYearFlights();
   }
 
   function syncColorUi() {
@@ -336,12 +365,14 @@
     saveColors();
     syncColorUi();
     drawAllTracks(false);
-    if (pick) run(false);
+    if (browseAll && allOn) listSelectedYearFlights(true);
+    else if (pick) run(false);
   }
   function applyYearFilter() {
     renderYearLegend();
     drawAllTracks(false);
-    run();
+    if (browseAll && allOn) listSelectedYearFlights(true);
+    else run();
   }
   function setYearSelection(on) {
     yearsOn.clear();
@@ -385,6 +416,87 @@
       });
     }
     return best;
+  }
+  function distPointSegPx(p, a, b) {
+    const dx = b.x - a.x, dy = b.y - a.y, L2 = dx * dx + dy * dy;
+    let u = L2 > 0 ? ((p.x - a.x) * dx + (p.y - a.y) * dy) / L2 : 0;
+    u = u < 0 ? 0 : u > 1 ? 1 : u;
+    return p.distanceTo(L.point(a.x + u * dx, a.y + u * dy));
+  }
+  function nearestTrack(latlng, maxPx) {
+    if (maxPx == null) maxPx = TRACK_PX;
+    const pt = map.latLngToContainerPoint(latlng);
+    const cands = [];
+    const seen = new Set();
+    const add = f => { if (f && !seen.has(f.id)) { seen.add(f.id); cands.push(f); } };
+    if (allOn) FL.forEach(f => { if (yearsOn.has(f.y)) add(f); });
+    lastHits.forEach(h => add(h.f));
+    if (selId) add(FL.find(x => x.id === selId));
+    if (!cands.length) return null;
+    let best = null;
+    const pad = maxPx;
+    for (const f of cands) {
+      const bb = f.bb;
+      if (bb) {
+        const sw = map.latLngToContainerPoint([bb[0], bb[1]]), ne = map.latLngToContainerPoint([bb[2], bb[3]]);
+        const minx = Math.min(sw.x, ne.x) - pad, maxx = Math.max(sw.x, ne.x) + pad;
+        const miny = Math.min(sw.y, ne.y) - pad, maxy = Math.max(sw.y, ne.y) + pad;
+        if (pt.x < minx || pt.x > maxx || pt.y < miny || pt.y > maxy) continue;
+      }
+      let dBest = Infinity;
+      const walk = (la, lo) => {
+        const n = la.length;
+        if (!n) return;
+        let prev = map.latLngToContainerPoint([la[0], lo[0]]);
+        if (n === 1) { dBest = Math.min(dBest, pt.distanceTo(prev)); return; }
+        for (let i = 1; i < n; i++) {
+          const cur = map.latLngToContainerPoint([la[i], lo[i]]);
+          const d = distPointSegPx(pt, prev, cur);
+          if (d < dBest) dBest = d;
+          prev = cur;
+        }
+      };
+      if (f.segs) for (const g of f.segs) walk(g.la, g.lo);
+      else if (f.simple) for (const pts of f.simple) walk(pts.map(p => p[0]), pts.map(p => p[1]));
+      if (dBest <= maxPx && (!best || dBest < best.d)) best = { f, d: dBest };
+    }
+    return best;
+  }
+  function listSelectedYearFlights(keepSel) {
+    const prev = keepSel ? selId : null;
+    const flights = FL.filter(f => yearsOn.has(f.y)).sort((a, b) => (a.d === b.d ? (a.id < b.id ? 1 : a.id > b.id ? -1 : 0) : (a.d < b.d ? 1 : -1)));
+    $('results').innerHTML = '';
+    resLayer.clearLayers();
+    const frag = document.createDocumentFragment();
+    lastHits = flights.map(f => ({ f, c: { d: NaN, t: (f.st || {}).t0 } }));
+    lastHits.forEach(({ f, c }) => {
+      const li = document.createElement('li');
+      li.dataset.id = f.id;
+      li.innerHTML = flightCardHtml(f, null);
+      li.addEventListener('click', e => { if (e.target.tagName !== 'A') select(f.id); });
+      frag.appendChild(li);
+    });
+    $('results').appendChild(frag);
+    const n = flights.length;
+    setStatus(n ? `<b>${n}</b> flight${n > 1 ? 's' : ''} for the selected year${yearsOn.size === 1 ? '' : 's'}, newest first. Tap a track or a row for details, or tap an empty spot on the map to see which flights passed there.` : (yearsOn.size ? 'No tracked flights in the selected years.' : 'No years selected. Choose a year, or All, to show flights.'));
+    if (prev && lastHits.some(h => h.f.id === prev)) select(prev, { fit: false });
+    else { selId = null; hiLayer.clearLayers(); }
+  }
+  function ensureFlightInList(f) {
+    if (!f || lastHits.some(h => h.f.id === f.id)) return;
+    const c = pick ? closest(f, pick[0], pick[1], 50 * MI) : null;
+    lastHits.unshift({ f, c: c || { d: NaN, t: (f.st || {}).t0 } });
+    const li = document.createElement('li');
+    li.dataset.id = f.id;
+    li.innerHTML = flightCardHtml(f, c && isFinite(c.d) ? c : null);
+    li.addEventListener('click', e => { if (e.target.tagName !== 'A') select(f.id); });
+    const ol = $('results');
+    ol.insertBefore(li, ol.firstChild);
+  }
+  function selectTrackFromMap(f) {
+    if (!f) return;
+    ensureFlightInList(f);
+    select(f.id, { fit: false });
   }
   function flightCardHtml(f, c) {
     const st = f.st, durH = (st.t1 - st.t0) / 3600;
@@ -485,8 +597,10 @@
 
   // ---------- inputs
   map.on('click', e => {
-    const hit = nearestPin(e.latlng);
-    if (hit) { showPhotoFlight(hit.m); return; }
+    const pin = nearestPin(e.latlng);
+    if (pin) { showPhotoFlight(pin.m); return; }
+    const tr = nearestTrack(e.latlng);
+    if (tr) { selectTrackFromMap(tr.f); return; }
     setPick(e.latlng.lat, e.latlng.lng, false);
   });
   $('radius').addEventListener('change', () => run(true));
@@ -532,6 +646,6 @@
     setStatus('Finding your location…');
     navigator.geolocation.getCurrentPosition(p => setPick(p.coords.latitude, p.coords.longitude, true), () => setStatus('Could not get your location. Search an address or tap the map.'), { enableHighAccuracy: true, timeout: 10000 });
   });
-  window.__site = { setPick, select, hits: () => lastHits, setAllTracks, drawAllTracks, setColorMode: m => { colorMode = m === 'year' ? 'year' : 'single'; applyColorChange(); }, colorMode: () => colorMode, allOn: () => allOn, setYearSelection, yearsOn: () => [...yearsOn].sort((a, b) => a - b), nearestPin, showPhotoFlight, showPhotoAt: (la, lo) => { const hit = nearestPin(L.latLng(la, lo)); if (hit) showPhotoFlight(hit.m); return hit && { d: hit.d, kind: hit.m._ppc && hit.m._ppc.kind, id: ((hit.m._ppc.flights||[])[0]||{}).id }; } };
+  window.__site = { setPick, select, hits: () => lastHits, setAllTracks, drawAllTracks, setColorMode: m => { colorMode = m === 'year' ? 'year' : 'single'; applyColorChange(); }, colorMode: () => colorMode, allOn: () => allOn, setYearSelection, yearsOn: () => [...yearsOn].sort((a, b) => a - b), nearestPin, showPhotoFlight, showPhotoAt: (la, lo) => { const hit = nearestPin(L.latLng(la, lo)); if (hit) showPhotoFlight(hit.m); return hit && { d: hit.d, kind: hit.m._ppc && hit.m._ppc.kind, id: ((hit.m._ppc.flights||[])[0]||{}).id }; }, nearestTrack, selectTrackFromMap, listSelectedYearFlights, browseAll: () => browseAll, selectTrackAt: (la, lo) => { const t = nearestTrack(L.latLng(la, lo)); if (t) selectTrackFromMap(t.f); return t && { d: t.d, id: t.f.id }; } };
   syncColorUi();
 })();
