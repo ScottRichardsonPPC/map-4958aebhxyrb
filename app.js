@@ -295,7 +295,7 @@
     else if (pick) run();
     else if (FL.length && !pick && !browseAll) {
       const n = filteredFlights().length;
-      setStatus(`<b>${n}</b> GPS-tracked flight${n === 1 ? '' : 's'} match ${filterPhrase()}. Search an address or tap the map, or turn on All tracks.`);
+      setStatus(`<b>${n}</b> GPS-tracked flight${n === 1 ? '' : 's'} match ${filterPhrase()}. Search an address or tap the map, or turn on Show all tracks.`);
     }
   }
   function photoStripHtml(f) {
@@ -396,7 +396,7 @@
     syncYearMenu();
     syncColorUi();
     updateStats();
-    setStatus(`<b>${FL.length}</b> GPS-tracked flights loaded. Search an address or tap the map, or turn on All tracks.`);
+    setStatus(`<b>${FL.length}</b> GPS-tracked flights loaded. Search an address or tap the map, or turn on Show all tracks.`);
     applyHash();
     window.addEventListener('hashchange', () => { if (!ignoreHash) applyHash(); });
   }).catch(() => setStatus('Could not load the flight data. Please reload the page.'));
@@ -759,7 +759,7 @@
       if (pick) run(false);
       else {
         if (wasBrowse) { lastHits = []; selId = null; onlyThis = false; $('results').innerHTML = ''; hiLayer.clearLayers(); applyOnlyThis(); }
-        if (FL.length) setStatus(`<b>${filteredFlights().length}</b> GPS-tracked flights match ${filterPhrase()}. Search an address or tap the map, or turn on All tracks.`);
+        if (FL.length) setStatus(`<b>${filteredFlights().length}</b> GPS-tracked flights match ${filterPhrase()}. Search an address or tap the map, or turn on Show all tracks.`);
       }
       return;
     }
