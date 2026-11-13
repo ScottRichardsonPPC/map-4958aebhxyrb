@@ -229,7 +229,7 @@
     $('results').appendChild(frag);
   }
 
-  function select(id) {
+  function select(id, opts) {
     const h = lastHits.find(x => x.f.id === id);
     const f = h ? h.f : FL.find(x => x.id === id);
     if (!f) return;
@@ -238,9 +238,10 @@
       const near = closest(f, pick[0], pick[1], 50 * MI);
       if (near) c = near;
     }
-    highlightFlight(f, c);
+    highlightFlight(f, c, opts);
   }
-  function highlightFlight(f, c) {
+  function highlightFlight(f, c, opts) {
+    const fit = !opts || opts.fit !== false;
     selId = f.id;
     hiLayer.clearLayers();
     document.querySelectorAll('#results li').forEach(li => li.classList.toggle('sel', li.dataset.id === f.id));
@@ -250,11 +251,30 @@
     }
     f.pp.forEach(p => photoPin(p, hiLayer, 3.5, f));
     f.bp.forEach(p => bestPin(p, f, hiLayer));
-    if (!lines.length) return;
-    const b = L.featureGroup(lines).getBounds();
-    if (pick) b.extend(pick);
-    map.fitBounds(b, { padding: [24, 24], maxZoom: 14 });
-    if (window.innerWidth < 800) $('map').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (fit && lines.length) {
+      const b = L.featureGroup(lines).getBounds();
+      if (pick) b.extend(pick);
+      map.fitBounds(b, { padding: [24, 24], maxZoom: 14 });
+      if (window.innerWidth < 800) $('map').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }
+  function openPhotoPopup(m, p) {
+    if (m && m._map && typeof m.openPopup === 'function') { m.openPopup(); return true; }
+    const key = photoKey(p || (m && m._ppc && m._ppc.p));
+    const ll = m && m.getLatLng ? m.getLatLng() : null;
+    const layers = [hiLayer, phLayer];
+    if (map.hasLayer(bestLayer)) layers.push(bestLayer);
+    let found = null;
+    for (const layer of layers) {
+      layer.eachLayer(x => {
+        if (!x._ppc || typeof x.openPopup !== 'function') return;
+        const sameKey = key && photoKey(x._ppc.p) === key;
+        const samePt = ll && x.getLatLng && x.getLatLng().equals(ll);
+        if (sameKey || samePt) found = found || x;
+      });
+    }
+    if (found) { found.openPopup(); return true; }
+    return false;
   }
 
   function drawAllTracks(fit) {
@@ -386,7 +406,7 @@
       <div class="r2">${fmtTime(st.t0)} – ${fmtTime(st.t1)} ET · ${dur}${htF ? ' · ' + htF : ''}</div>
       <div class="r2">${esc(f.ac)} · ${esc(f.n)}</div>${vids}${ph}`;
   }
-  function presentFlights(flights, status) {
+  function presentFlights(flights, status, opts) {
     $('results').innerHTML = '';
     hiLayer.clearLayers();
     resLayer.clearLayers();
@@ -404,31 +424,33 @@
     });
     $('results').appendChild(frag);
     setStatus(status);
-    if (flights[0]) select(flights[0].id);
+    if (flights[0]) select(flights[0].id, opts);
   }
   function showPhotoFlight(m) {
-    if (m && m.openPopup) m.openPopup();
     const info = (m && m._ppc) || {};
     const flights = flightsForPhoto(info.p, info.flights || []);
     if (!flights.length) {
+      openPhotoPopup(m, info.p);
       setStatus('Couldn’t match this photo to a tracked flight.');
+      return;
+    }
+    const already = flights.some(f => f.id === selId);
+    if (already) {
+      openPhotoPopup(m, info.p);
       return;
     }
     const inList = lastHits.length && flights.every(f => lastHits.some(h => h.f.id === f.id));
     if (inList) {
-      select(flights[0].id);
+      select(flights[0].id, { fit: false });
       if (flights.length > 1) setStatus(`This photo is on ${flights.length} flights. They’re listed below; tap one to see its track.`);
-      if (m && m.openPopup) m.openPopup();
+      openPhotoPopup(m, info.p);
       return;
     }
     const status = flights.length > 1
       ? `This photo is on ${flights.length} flights. They’re listed below; tap one to see its track.`
       : 'Flight for the photo you tapped.';
-    presentFlights(flights, status);
-    if (m && m.openPopup) {
-      map.once('moveend', () => { try { m.openPopup(); } catch (_) {} });
-      setTimeout(() => { try { m.openPopup(); } catch (_) {} }, 400);
-    }
+    presentFlights(flights, status, { fit: false });
+    openPhotoPopup(m, info.p);
   }
 
   function photoUrl(p) {
