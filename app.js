@@ -162,8 +162,8 @@
       if (!visible(f) || !f.simple) continue;
       for (const line of f.simple) for (const p of line) pts.push([p[0], p[1], 0.45]);
     }
-    heatLayer.setLatLngs(pts);
     if (!map.hasLayer(heatLayer)) heatLayer.addTo(map);
+    heatLayer.setLatLngs(pts);
     // Keep tracks and pins above the heat canvas.
     [allLayer, resLayer, phLayer, hiLayer].forEach(ly => {
       if (ly && map.hasLayer(ly)) { map.removeLayer(ly); ly.addTo(map); }
