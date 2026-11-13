@@ -3,6 +3,8 @@
   const MI = 1609.344, NOTE = 'Video may not include every part of this flight; the section over your location might not have been filmed or kept.';
   const LS_MODE = 'ppc-track-color-mode', LS_COLOR = 'ppc-track-color', LS_YEARS = 'ppc-track-year-colors';
   const DEFAULT_COLOR = '#FFB000';
+  // Best-of (4–5★) layer. Public builds set this to false via make_site_public.py unless --best-of is passed.
+  const SHOW_BEST_OF = false;
   // High-contrast defaults that stay visible on satellite imagery and on the street map.
   const YEAR_DEFAULTS = {
     2015: '#F5D000', 2016: '#FF6A00', 2017: '#E31C3D', 2018: '#00C2E0',
@@ -20,7 +22,8 @@
   const topo = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: ESRI });
   const bestLayer = L.layerGroup();
   window.PPCMAP = { map, bestLayer };
-  L.control.layers({ 'Street map': street, 'Satellite': sat, 'Topographic': topo }, { 'Best-of photos (4–5★)': bestLayer }, { position: 'topright', collapsed: false }).addTo(map);
+  const overlays = SHOW_BEST_OF ? { 'Best-of photos (4–5★)': bestLayer } : {};
+  L.control.layers({ 'Street map': street, 'Satellite': sat, 'Topographic': topo }, overlays, { position: 'topright', collapsed: false }).addTo(map);
   const LocateCtl = L.Control.extend({
     options: { position: 'topleft' },
     onAdd: function () {
@@ -43,7 +46,8 @@
       + '<div class="lg"><span class="dot gold"></span> 4-star, posted on Facebook</div>';
     return d;
   };
-  legend.addTo(map);
+  if (SHOW_BEST_OF) legend.addTo(map);
+  if (!SHOW_BEST_OF) { const _bc = document.getElementById('bestof-copy'); if (_bc) _bc.remove(); }
   const allRenderer = L.canvas({ padding: 0.5 });
   const allLayer = L.layerGroup().addTo(map);
   let FL = [], ZONES = [], pick = null, pickMarker = null, circle = null, hereMarker = null, resLayer = L.layerGroup().addTo(map), hiLayer = L.layerGroup().addTo(map), phLayer = L.layerGroup().addTo(map), lastHits = [], selId = null, browseAll = false, onlyThis = false, ignoreHash = false, lastCopied = '';
@@ -105,7 +109,7 @@
       (f.pp || []).forEach(p => indexPhoto(p, f));
       (f.bp || []).forEach(p => indexPhoto(p, f));
     });
-    FL.forEach(f => f.bp.forEach(p => bestPin(p, f, bestLayer)));
+    if (SHOW_BEST_OF) FL.forEach(f => f.bp.forEach(p => bestPin(p, f, bestLayer)));
     const yrs = [...new Set(FL.map(f => f.y))].sort();
     yrs.forEach(y => yearsOn.add(y));
     $('years').innerHTML = yrs.map(y => `<label><input type="checkbox" value="${y}" checked>${y}</label>`).join('');
@@ -322,7 +326,7 @@
           '<br>' + postLinks.map(u => fbLink(u, 'View Facebook post')).join(' · ') + '</div>';
       }
       if ((f.ph || []).length) ph += `<div class="photos">Facebook photo post${f.ph.length > 1 ? 's' : ''} from this flight: ` + f.ph.slice(0, 4).map(p => fbLink(p.u, fmtDate(p.pd)) + ` (${p.n} photo${p.n > 1 ? 's' : ''})`).join(' · ') + (f.ph.length > 4 ? ` · +${f.ph.length - 4} more` : '') + '</div>';
-      if (f.lr) ph += `<div class="photos lr">🖼️ ${f.lr.n.toLocaleString()} photo${f.lr.n > 1 ? 's' : ''} in Scott's photo library from this flight` + (f.lr.np ? ` (${f.lr.np} posted)` : '') + (f.bp.length ? `, ${f.bp.length} best-of (4–5★, posted) shown on the map when selected` : '') +
+      if (f.lr) ph += `<div class="photos lr">🖼️ ${f.lr.n.toLocaleString()} photo${f.lr.n > 1 ? 's' : ''} in Scott's photo library from this flight` + (f.lr.np ? ` (${f.lr.np} posted)` : '') + (SHOW_BEST_OF && f.bp.length ? `, ${f.bp.length} best-of (4–5★, posted) shown on the map when selected` : '') +
         (f.lr.lab ? ` · ${esc(f.lr.lab)}` : '') + (f.lr.sub.length ? `<br><span class="note">Possible subjects (a guess from the camera's direction): ${f.lr.sub.map(esc).join(', ')}</span>` : '') + '</div>';
       li.innerHTML = `<div class="r1"><span>${fmtDate(f.d)}</span><span>${fmtDist(c.d)} away ${shareFlightBtn(f)}</span></div>
         <div class="r2">Closest about ${fmtTime(c.t)} ET · ${ht}</div>
@@ -359,7 +363,7 @@
       L.circleMarker([c.la, c.lo], { radius: 6, color: '#b3261e', fillColor: '#fff', fillOpacity: 1, weight: 3 }).bindTooltip(`Closest: ${fmtDist(c.d)}, about ${fmtTime(c.t)} ET`).addTo(hiLayer);
     }
     f.pp.forEach(p => photoPin(p, hiLayer, 3.5, f));
-    f.bp.forEach(p => bestPin(p, f, hiLayer));
+    if (SHOW_BEST_OF) f.bp.forEach(p => bestPin(p, f, hiLayer));
     if (fit && lines.length) {
       const b = L.featureGroup(lines).getBounds();
       if (pick) b.extend(pick);
@@ -641,7 +645,7 @@
     const vids = vidsHtml(f);
     let ph = '';
     if ((f.ph || []).length) ph += `<div class="photos">Facebook photo post${f.ph.length > 1 ? 's' : ''} from this flight: ` + f.ph.slice(0, 4).map(p => fbLink(p.u, fmtDate(p.pd)) + ` (${p.n} photo${p.n > 1 ? 's' : ''})`).join(' · ') + (f.ph.length > 4 ? ` · +${f.ph.length - 4} more` : '') + '</div>';
-    if (f.lr) ph += `<div class="photos lr">🖼️ ${f.lr.n.toLocaleString()} photo${f.lr.n > 1 ? 's' : ''} in Scott's photo library from this flight` + (f.lr.np ? ` (${f.lr.np} posted)` : '') + (f.bp.length ? `, ${f.bp.length} best-of (4–5★, posted) shown on the map when selected` : '') +
+    if (f.lr) ph += `<div class="photos lr">🖼️ ${f.lr.n.toLocaleString()} photo${f.lr.n > 1 ? 's' : ''} in Scott's photo library from this flight` + (f.lr.np ? ` (${f.lr.np} posted)` : '') + (SHOW_BEST_OF && f.bp.length ? `, ${f.bp.length} best-of (4–5★, posted) shown on the map when selected` : '') +
       (f.lr.lab ? ` · ${esc(f.lr.lab)}` : '') + (f.lr.sub && f.lr.sub.length ? `<br><span class="note">Possible subjects (a guess from the camera's direction): ${f.lr.sub.map(esc).join(', ')}</span>` : '') + '</div>';
     if (c && isFinite(c.d)) {
       return `<div class="r1"><span>${fmtDate(f.d)}</span><span>${fmtDist(c.d)} away ${shareFlightBtn(f)}</span></div>
@@ -797,6 +801,6 @@
     const url = btn.getAttribute('data-share-url');
     if (url) shareLink(url, btn.getAttribute('aria-label') || 'Shared link');
   });
-  window.__site = { setPick, select, hits: () => lastHits, setAllTracks, drawAllTracks, setColorMode: m => { colorMode = m === 'year' ? 'year' : 'single'; applyColorChange(); }, colorMode: () => colorMode, allOn: () => allOn, setYearSelection, yearsOn: () => [...yearsOn].sort((a, b) => a - b), nearestPin, showPhotoFlight, showPhotoAt: (la, lo) => { const hit = nearestPin(L.latLng(la, lo)); if (hit) showPhotoFlight(hit.m); return hit && { d: hit.d, kind: hit.m._ppc && hit.m._ppc.kind, id: ((hit.m._ppc.flights||[])[0]||{}).id }; }, nearestTrack, selectTrackFromMap, listSelectedYearFlights, browseAll: () => browseAll, selectTrackAt: (la, lo) => { const t = nearestTrack(L.latLng(la, lo)); if (t) selectTrackFromMap(t.f); return t && { d: t.d, id: t.f.id }; }, openFlightLink, applyHash, flightShareUrl, shareLink, locateMe, lastCopied: () => lastCopied, hereMarker: () => hereMarker, onlyThis: () => onlyThis, setOnlyThis };
+  window.__site = { setPick, select, hits: () => lastHits, setAllTracks, drawAllTracks, setColorMode: m => { colorMode = m === 'year' ? 'year' : 'single'; applyColorChange(); }, colorMode: () => colorMode, allOn: () => allOn, setYearSelection, yearsOn: () => [...yearsOn].sort((a, b) => a - b), nearestPin, showPhotoFlight, showPhotoAt: (la, lo) => { const hit = nearestPin(L.latLng(la, lo)); if (hit) showPhotoFlight(hit.m); return hit && { d: hit.d, kind: hit.m._ppc && hit.m._ppc.kind, id: ((hit.m._ppc.flights||[])[0]||{}).id }; }, nearestTrack, selectTrackFromMap, listSelectedYearFlights, browseAll: () => browseAll, selectTrackAt: (la, lo) => { const t = nearestTrack(L.latLng(la, lo)); if (t) selectTrackFromMap(t.f); return t && { d: t.d, id: t.f.id }; }, openFlightLink, applyHash, flightShareUrl, shareLink, locateMe, lastCopied: () => lastCopied, hereMarker: () => hereMarker, onlyThis: () => onlyThis, setOnlyThis, showBestOf: () => SHOW_BEST_OF };
   syncColorUi();
 })();
