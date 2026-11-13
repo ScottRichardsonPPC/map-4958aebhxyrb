@@ -23,7 +23,9 @@
   const bestLayer = L.layerGroup();
   window.PPCMAP = { map, bestLayer };
   const overlays = SHOW_BEST_OF ? { 'Best-of photos (4–5★)': bestLayer } : {};
-  L.control.layers({ 'Street map': street, 'Satellite': sat, 'Topographic': topo }, overlays, { position: 'topright', collapsed: false }).addTo(map);
+  const narrow = window.matchMedia('(max-width: 800px)').matches;
+  L.control.layers({ 'Street map': street, 'Satellite': sat, 'Topographic': topo }, overlays, { position: 'topright', collapsed: narrow }).addTo(map);
+  if (L.heatLayer) heatLayer = L.heatLayer([], { radius: 22, blur: 18, maxZoom: 11, minOpacity: 0.35 });
   const LocateCtl = L.Control.extend({
     options: { position: 'topleft' },
     onAdd: function () {
@@ -56,6 +58,20 @@
   const TAP_PX = 20;   // generous tap target for photo pins, including on a phone
   const TRACK_PX = 18;   // generous tap target for tracks, including on a phone
   const yearsOn = new Set();
+  const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const TODS = ['sunrise','morning','midday','afternoon','sunset','night'];
+  const TOD_LABELS = { sunrise:'Sunrise', morning:'Morning', midday:'Midday', afternoon:'Afternoon', sunset:'Sunset', night:'Night' };
+  const MONTH_PRESETS = [
+    { id:'fall', label:'Fall harvest', months:[9,10,11] },
+    { id:'summer', label:'Summer', months:[6,7,8] },
+    { id:'winter', label:'Winter', months:[12,1,2] }
+  ];
+  const TOD_PRESETS = [
+    { id:'dawndusk', label:'Sunrise & sunset', tod:['sunrise','sunset'] }
+  ];
+  const monthsOn = new Set([1,2,3,4,5,6,7,8,9,10,11,12]);
+  const todOn = new Set(TODS);
+  let heatOn = false, heatLayer = null;
   let allOn = false, colorMode = 'single', trackColor = DEFAULT_COLOR, yearColors = Object.assign({}, YEAR_DEFAULTS);
 
   try {
@@ -80,6 +96,228 @@
     } catch (_) {}
   }
   const colorForYear = y => colorMode === 'year' ? (yearColors[y] || YEAR_DEFAULTS[y] || trackColor) : trackColor;
+
+  function visible(f) {
+    if (!yearsOn.has(f.y)) return false;
+    if (!monthsOn.has(f.mo || +String(f.d || '').slice(5, 7))) return false;
+    const tod = f.tod || [];
+    if (!todOn.size) return false;
+    if (!tod.length) return true;
+    return tod.some(b => todOn.has(b));
+  }
+  function filteredFlights() { return FL.filter(visible); }
+  function filterNarrowed() {
+    const allY = new Set(FL.map(f => f.y));
+    return monthsOn.size < 12 || todOn.size < TODS.length || (allY.size && yearsOn.size < allY.size);
+  }
+  function filterPhrase() { return filterNarrowed() ? 'the selected filters' : 'the selected years'; }
+  function activeFilterCount() {
+    let n = 0;
+    if (monthsOn.size && monthsOn.size < 12) n++;
+    if (todOn.size && todOn.size < TODS.length) n++;
+    return n;
+  }
+  function updateFilterBadge() {
+    const el = $('filterbadge'), n = activeFilterCount();
+    if (!el) return;
+    if (n) { el.hidden = false; el.textContent = String(n); }
+    else { el.hidden = true; el.textContent = '0'; }
+    syncPresetButtons();
+  }
+  function fmtHours(h) {
+    if (h < 10) return h.toFixed(1).replace(/\.0$/, '') + ' h';
+    return Math.round(h).toLocaleString() + ' h';
+  }
+  function updateStats() {
+    const el = $('stats');
+    if (!el) return;
+    const fs = filteredFlights();
+    if (!fs.length) {
+      el.innerHTML = monthsOn.size && todOn.size && yearsOn.size ? 'No flights match these filters.' : 'No flights — choose a year, month, or time of day.';
+      return;
+    }
+    let hours = 0, miles = 0, maxAg = -Infinity, has = false;
+    for (const f of fs) {
+      const st = f.st || {};
+      if (st.t1 > st.t0) hours += (st.t1 - st.t0) / 3600;
+      miles += (st.dist || 0) / MI;
+      if (st.hasAg && st.maxAg > maxAg) { has = true; maxAg = st.maxAg; }
+    }
+    const ht = !has ? 'highest AGL unavailable' : (maxAg < 100 ? 'highest under 100 ft AGL' : `highest ${(Math.round(maxAg / 50) * 50).toLocaleString()} ft AGL`);
+    el.innerHTML = `<b>${fs.length.toLocaleString()}</b> flight${fs.length === 1 ? '' : 's'}<span class="sep">·</span><b>${fmtHours(hours)}</b><span class="sep">·</span><b>${miles < 10 ? miles.toFixed(1) : Math.round(miles).toLocaleString()} mi</b><span class="sep">·</span><span class="agl" title="Above the ground at takeoff, not sea level.">${ht}</span>`;
+  }
+  function drawHeat() {
+    if (!heatLayer) return;
+    const hide = !heatOn || (onlyThis && selId);
+    if (hide) {
+      if (map.hasLayer(heatLayer)) map.removeLayer(heatLayer);
+      return;
+    }
+    const pts = [];
+    for (const f of FL) {
+      if (!visible(f) || !f.simple) continue;
+      for (const line of f.simple) for (const p of line) pts.push([p[0], p[1], 0.45]);
+    }
+    heatLayer.setLatLngs(pts);
+    if (!map.hasLayer(heatLayer)) heatLayer.addTo(map);
+    // Keep tracks and pins above the heat canvas.
+    [allLayer, resLayer, phLayer, hiLayer].forEach(ly => {
+      if (ly && map.hasLayer(ly)) { map.removeLayer(ly); ly.addTo(map); }
+    });
+  }
+  function setHeat(on) {
+    heatOn = !!on;
+    const box = $('heatmap');
+    if (box) box.checked = heatOn;
+    drawHeat();
+  }
+  function renderFilterChips() {
+    const mon = $('months');
+    if (mon && !mon.dataset.ready) {
+      mon.dataset.ready = '1';
+      mon.innerHTML = MONTH_NAMES.map((n, i) => `<label><input type="checkbox" value="${i+1}" checked>${n}</label>`).join('');
+      mon.addEventListener('change', e => {
+        const m = +e.target.value;
+        e.target.checked ? monthsOn.add(m) : monthsOn.delete(m);
+        e.target.parentNode.classList.toggle('off', !e.target.checked);
+        applyFilters();
+      });
+    }
+    const tod = $('tods');
+    if (tod && !tod.dataset.ready) {
+      tod.dataset.ready = '1';
+      tod.innerHTML = TODS.map(id => `<label><input type="checkbox" value="${id}" checked>${TOD_LABELS[id]}</label>`).join('');
+      tod.addEventListener('change', e => {
+        const id = e.target.value;
+        e.target.checked ? todOn.add(id) : todOn.delete(id);
+        e.target.parentNode.classList.toggle('off', !e.target.checked);
+        applyFilters();
+      });
+    }
+    const mp = $('monthpresets');
+    if (mp && !mp.dataset.ready) {
+      mp.dataset.ready = '1';
+      mp.innerHTML = MONTH_PRESETS.map(p => `<button type="button" data-month-preset="${p.id}">${p.label}</button>`).join('');
+    }
+    const tp = $('todpresets');
+    if (tp && !tp.dataset.ready) {
+      tp.dataset.ready = '1';
+      tp.innerHTML = TOD_PRESETS.map(p => `<button type="button" data-tod-preset="${p.id}">${p.label}</button>`).join('');
+    }
+    updateFilterBadge();
+  }
+  function setMonthSelection(months) {
+    monthsOn.clear();
+    months.forEach(m => monthsOn.add(+m));
+    document.querySelectorAll('#months input[type=checkbox]').forEach(b => {
+      b.checked = monthsOn.has(+b.value);
+      b.parentNode.classList.toggle('off', !b.checked);
+    });
+    applyFilters();
+  }
+  function setTodSelection(ids) {
+    todOn.clear();
+    ids.forEach(id => todOn.add(id));
+    document.querySelectorAll('#tods input[type=checkbox]').forEach(b => {
+      b.checked = todOn.has(b.value);
+      b.parentNode.classList.toggle('off', !b.checked);
+    });
+    applyFilters();
+  }
+  function syncPresetButtons() {
+    MONTH_PRESETS.forEach(p => {
+      const btn = document.querySelector(`[data-month-preset="${p.id}"]`);
+      if (!btn) return;
+      const on = p.months.length === monthsOn.size && p.months.every(m => monthsOn.has(m));
+      btn.classList.toggle('on', on);
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    TOD_PRESETS.forEach(p => {
+      const btn = document.querySelector(`[data-tod-preset="${p.id}"]`);
+      if (!btn) return;
+      const on = p.tod.length === todOn.size && p.tod.every(id => todOn.has(id));
+      btn.classList.toggle('on', on);
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  }
+  function resetFilters() {
+    const yrs = [...new Set(FL.map(f => f.y))];
+    yearsOn.clear();
+    yrs.forEach(y => yearsOn.add(y));
+    document.querySelectorAll('#years input[type=checkbox]').forEach(b => { b.checked = true; b.parentNode.classList.remove('off'); });
+    setMonthSelection([1,2,3,4,5,6,7,8,9,10,11,12]);
+    setTodSelection(TODS.slice());
+  }
+  function applyFilters() {
+    updateFilterBadge();
+    updateStats();
+    drawHeat();
+    renderYearLegend();
+    drawAllTracks(false);
+    if (browseAll && allOn) listSelectedYearFlights(true);
+    else if (pick) run();
+    else if (FL.length && !pick && !browseAll) {
+      const n = filteredFlights().length;
+      setStatus(`<b>${n}</b> GPS-tracked flight${n === 1 ? '' : 's'} match ${filterPhrase()}. Search an address or tap the map, or turn on All tracks.`);
+    }
+  }
+  function photoStripHtml(f) {
+    const ps = f.ps || [];
+    if (!ps.length) return '';
+    let html = '<div class="photostrip"><div class="strip-scroll">';
+    for (const p of ps) {
+      const id = p[1], u = p[2] || '', t = p[0];
+      html += `<button type="button" class="strip-th" data-large="photos/l/${esc(id)}.jpg" data-fb="${esc(u)}" data-t="${t}" aria-label="Posted photo, ${fmtTime(t)}"><img src="photos/t/${esc(id)}.jpg" alt="" loading="lazy" decoding="async"></button>`;
+    }
+    html += '</div>';
+    const more = (f.psn || 0) - ps.length;
+    if (more > 0) {
+      const first = (f.ph && f.ph[0] && f.ph[0].u) || (ps[0] && ps[0][2]) || '';
+      html += `<div class="strip-more">+${more} more on Facebook` + (first ? ' · ' + fbLink(first, 'View Facebook post') : '') + '</div>';
+    }
+    html += '</div>';
+    return html;
+  }
+  function syncPhotoStrip() {
+    document.querySelectorAll('#results .photostrip').forEach(el => el.remove());
+    const row = document.querySelector('#results li.sel');
+    if (!row || !selId) return;
+    const f = FL.find(x => x.id === selId);
+    if (!f) return;
+    const html = photoStripHtml(f);
+    if (!html) return;
+    const wrap = document.createElement('div');
+    wrap.innerHTML = html;
+    const only = row.querySelector('.only-this');
+    if (only) row.insertBefore(wrap.firstChild, only);
+    else row.appendChild(wrap.firstChild);
+  }
+  function closeLightbox() {
+    const box = $('lightbox');
+    if (box) box.hidden = true;
+  }
+  function openLightbox(large, fb, t) {
+    let box = $('lightbox');
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'lightbox';
+      box.setAttribute('role', 'dialog');
+      box.setAttribute('aria-modal', 'true');
+      box.setAttribute('aria-label', 'Posted photo');
+      box.innerHTML = '<img alt="Posted photo"><div class="lb-bar"><span class="lb-when"></span><a class="lb-fb" target="_blank" rel="noopener">View Facebook post</a><button type="button" class="lb-close">Close</button></div>';
+      box.addEventListener('click', e => { if (e.target === box || e.target.closest('.lb-close')) closeLightbox(); });
+      document.body.appendChild(box);
+    }
+    const img = box.querySelector('img');
+    img.src = large;
+    img.alt = t ? ('Posted photo, ' + fmtTime(+t)) : 'Posted photo';
+    const when = box.querySelector('.lb-when');
+    when.textContent = t ? (fmtTime(+t) + ' ET') : '';
+    const a = box.querySelector('.lb-fb');
+    if (fb) { a.href = fb; a.hidden = false; }
+    else { a.removeAttribute('href'); a.hidden = true; }
+    box.hidden = false;
+  }
 
   // ---------- data
   (window.FLIGHTS_DATA ? Promise.resolve(window.FLIGHTS_DATA) : fetch('data/flights.json').then(r => r.json())).then(D => {   // offline build sets FLIGHTS_DATA via data/flights.js
@@ -115,10 +353,12 @@
     $('years').innerHTML = yrs.map(y => `<label><input type="checkbox" value="${y}" checked>${y}</label>`).join('');
     $('years').addEventListener('change', e => {
       const y = +e.target.value; e.target.checked ? yearsOn.add(y) : yearsOn.delete(y); e.target.parentNode.classList.toggle('off', !e.target.checked);
-      applyYearFilter();
+      applyFilters();
     });
+    renderFilterChips();
     syncColorUi();
-    setStatus(`<b>${FL.length}</b> GPS-tracked flights loaded. Search an address or tap the map, or show all tracks for the selected years.`);
+    updateStats();
+    setStatus(`<b>${FL.length}</b> GPS-tracked flights loaded. Search an address or tap the map, or turn on All tracks.`);
     applyHash();
     window.addEventListener('hashchange', () => { if (!ignoreHash) applyHash(); });
   }).catch(() => setStatus('Could not load the flight data. Please reload the page.'));
@@ -298,13 +538,15 @@
     resLayer.clearLayers(); hiLayer.clearLayers(); phLayer.clearLayers(); $('results').innerHTML = ''; selId = null;
     if (inZone(pick[0], pick[1])) { lastHits = []; setStatus('No flight data shown for this area.'); return; }
     if (!yearsOn.size) { lastHits = []; setStatus('No years selected. Choose a year, or All, to see flights near this spot.'); return; }
+    if (!monthsOn.size) { lastHits = []; setStatus('No months selected. Choose a month or Fall harvest in Filters & layers.'); return; }
+    if (!todOn.size) { lastHits = []; setStatus('No times of day selected. Choose a time in Filters & layers.'); return; }
     const t0 = performance.now();
     lastHits = [];
-    for (const f of FL) { if (!yearsOn.has(f.y)) continue; const c = closest(f, pick[0], pick[1], rM); if (c) lastHits.push({ f, c }); }
+    for (const f of FL) { if (!visible(f)) continue; const c = closest(f, pick[0], pick[1], rM); if (c) lastHits.push({ f, c }); }
     lastHits.sort((a, b) => b.c.t - a.c.t);
     const ms = Math.round(performance.now() - t0);
     const r = $('radius').selectedOptions[0].textContent;
-    setStatus(lastHits.length ? `<b>${lastHits.length}</b> flight${lastHits.length > 1 ? 's' : ''} passed within ${r}, newest first. Tap one to see its track.` : `No tracked flights passed within ${r} of this spot${yearsOn.size < new Set(FL.map(f => f.y)).size ? ' in the selected years' : ''}.`);
+    setStatus(lastHits.length ? `<b>${lastHits.length}</b> flight${lastHits.length > 1 ? 's' : ''} passed within ${r}, newest first. Tap one to see its track.` : `No tracked flights passed within ${r} of this spot${filterNarrowed() ? ' for these filters' : ''}.`);
     $('status').dataset.ms = ms;
     const frag = document.createDocumentFragment();
     lastHits.forEach(({ f, c }) => {
@@ -381,9 +623,14 @@
     ensure(allLayer, !hide);
     ensure(resLayer, !hide);
     ensure(phLayer, !hide);
+    if (heatLayer) {
+      if (hide || !heatOn) { if (map.hasLayer(heatLayer)) map.removeLayer(heatLayer); }
+      else if (!map.hasLayer(heatLayer)) heatLayer.addTo(map);
+    }
     if (map.hasLayer(hiLayer)) map.removeLayer(hiLayer);
     hiLayer.addTo(map);
     syncOnlyThisUi();
+    syncPhotoStrip();
   }
   function setOnlyThis(on) {
     onlyThis = !!(on && selId);
@@ -423,7 +670,7 @@
     const lines = [];
     let n = 0;
     for (const f of FL) {
-      if (!yearsOn.has(f.y)) continue;
+      if (!visible(f)) continue;
       n++;
       const col = colorForYear(f.y);
       for (const pts of f.simple) {
@@ -447,7 +694,7 @@
       try { map.fitBounds(L.featureGroup(lines).getBounds(), { padding: [24, 24], maxZoom: 11 }); } catch (_) {}
     }
     if (!pick) {
-      setStatus(n ? `<b>${n}</b> track${n > 1 ? 's' : ''} for the selected year${yearsOn.size === 1 ? '' : 's'}. Search or tap the map to see which flights passed a spot, or tap a track for details.` : (yearsOn.size ? 'No tracked flights in the selected years.' : 'No years selected. Choose a year, or All, to show tracks.'));
+      setStatus(n ? `<b>${n}</b> track${n > 1 ? 's' : ''} for ${filterPhrase()}. Search or tap the map to see which flights passed a spot, or tap a track for details.` : (yearsOn.size && monthsOn.size && todOn.size ? `No tracked flights match ${filterPhrase()}.` : 'No years, months, or times selected. Use Filters & layers, or All, to show tracks.'));
     }
     if (onlyThis && selId) applyOnlyThis();
   }
@@ -474,7 +721,7 @@
       if (pick) run(false);
       else {
         if (wasBrowse) { lastHits = []; selId = null; onlyThis = false; $('results').innerHTML = ''; hiLayer.clearLayers(); applyOnlyThis(); }
-        if (FL.length) setStatus(`<b>${FL.length}</b> GPS-tracked flights loaded. Search an address or tap the map, or show all tracks for the selected years.`);
+        if (FL.length) setStatus(`<b>${filteredFlights().length}</b> GPS-tracked flights match ${filterPhrase()}. Search an address or tap the map, or turn on All tracks.`);
       }
       return;
     }
@@ -506,12 +753,6 @@
     if (browseAll && allOn) listSelectedYearFlights(true);
     else if (pick) run(false);
   }
-  function applyYearFilter() {
-    renderYearLegend();
-    drawAllTracks(false);
-    if (browseAll && allOn) listSelectedYearFlights(true);
-    else run();
-  }
   function setYearSelection(on) {
     yearsOn.clear();
     document.querySelectorAll('#years input[type=checkbox]').forEach(b => {
@@ -519,7 +760,7 @@
       b.parentNode.classList.toggle('off', !b.checked);
       if (b.checked) yearsOn.add(+b.value);
     });
-    applyYearFilter();
+    applyFilters();
   }
 
   function photoKey(p) {
@@ -567,7 +808,7 @@
     const cands = [];
     const seen = new Set();
     const add = f => { if (f && !seen.has(f.id)) { seen.add(f.id); cands.push(f); } };
-    if (allOn) FL.forEach(f => { if (yearsOn.has(f.y)) add(f); });
+    if (allOn) FL.forEach(f => { if (visible(f)) add(f); });
     lastHits.forEach(h => add(h.f));
     if (selId) add(FL.find(x => x.id === selId));
     if (!cands.length) return null;
@@ -602,7 +843,7 @@
   }
   function listSelectedYearFlights(keepSel) {
     const prev = keepSel ? selId : null;
-    const flights = FL.filter(f => yearsOn.has(f.y)).sort((a, b) => (a.d === b.d ? (a.id < b.id ? 1 : a.id > b.id ? -1 : 0) : (a.d < b.d ? 1 : -1)));
+    const flights = FL.filter(visible).sort((a, b) => (a.d === b.d ? (a.id < b.id ? 1 : a.id > b.id ? -1 : 0) : (a.d < b.d ? 1 : -1)));
     $('results').innerHTML = '';
     resLayer.clearLayers();
     const frag = document.createDocumentFragment();
@@ -616,7 +857,7 @@
     });
     $('results').appendChild(frag);
     const n = flights.length;
-    setStatus(n ? `<b>${n}</b> flight${n > 1 ? 's' : ''} for the selected year${yearsOn.size === 1 ? '' : 's'}, newest first. Tap a track or a row for details, or tap an empty spot on the map to see which flights passed there.` : (yearsOn.size ? 'No tracked flights in the selected years.' : 'No years selected. Choose a year, or All, to show flights.'));
+    setStatus(n ? `<b>${n}</b> flight${n > 1 ? 's' : ''} for ${filterPhrase()}, newest first. Tap a track or a row for details, or tap an empty spot on the map to see which flights passed there.` : (yearsOn.size && monthsOn.size && todOn.size ? `No tracked flights match ${filterPhrase()}.` : 'No years, months, or times selected. Use Filters & layers, or All, to show flights.'));
     if (prev && lastHits.some(h => h.f.id === prev)) select(prev, { fit: false });
     else { selId = null; onlyThis = false; hiLayer.clearLayers(); applyOnlyThis(); }
   }
@@ -745,6 +986,33 @@
   $('alltracks').addEventListener('click', () => setAllTracks(!allOn, true));
   $('yearsall').addEventListener('click', () => setYearSelection(true));
   $('yearsnone').addEventListener('click', () => setYearSelection(false));
+  const morebtn = $('morebtn');
+  if (morebtn) morebtn.addEventListener('click', () => {
+    const panel = $('morepanel');
+    const open = panel.hidden;
+    panel.hidden = !open;
+    morebtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+  const reset = $('resetfilters');
+  if (reset) reset.addEventListener('click', resetFilters);
+  document.addEventListener('click', e => {
+    const mb = e.target.closest('[data-month-preset]');
+    if (mb) {
+      const p = MONTH_PRESETS.find(x => x.id === mb.getAttribute('data-month-preset'));
+      if (p) setMonthSelection(p.months);
+      return;
+    }
+    const tb = e.target.closest('[data-tod-preset]');
+    if (tb) {
+      const p = TOD_PRESETS.find(x => x.id === tb.getAttribute('data-tod-preset'));
+      if (p) setTodSelection(p.tod);
+    }
+  });
+  const heatBox = $('heatmap');
+  if (heatBox) {
+    if (!L.heatLayer) { heatBox.disabled = true; heatBox.parentNode.append(' (unavailable)'); }
+    else heatBox.addEventListener('change', () => setHeat(heatBox.checked));
+  }
   document.querySelectorAll('input[name="tcmode"]').forEach(r => r.addEventListener('change', e => {
     if (!e.target.checked) return;
     colorMode = e.target.value === 'year' ? 'year' : 'single';
@@ -788,6 +1056,16 @@
     setOnlyThis(!onlyThis);
   });
   document.addEventListener('click', e => {
+    const th = e.target.closest('.strip-th');
+    if (th) {
+      e.preventDefault();
+      e.stopPropagation();
+      openLightbox(th.getAttribute('data-large'), th.getAttribute('data-fb'), th.getAttribute('data-t'));
+      return;
+    }
+  });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
+  document.addEventListener('click', e => {
     const btn = e.target.closest('[data-share], [data-share-url]');
     if (!btn) return;
     e.preventDefault();
@@ -801,6 +1079,7 @@
     const url = btn.getAttribute('data-share-url');
     if (url) shareLink(url, btn.getAttribute('aria-label') || 'Shared link');
   });
-  window.__site = { setPick, select, hits: () => lastHits, setAllTracks, drawAllTracks, setColorMode: m => { colorMode = m === 'year' ? 'year' : 'single'; applyColorChange(); }, colorMode: () => colorMode, allOn: () => allOn, setYearSelection, yearsOn: () => [...yearsOn].sort((a, b) => a - b), nearestPin, showPhotoFlight, showPhotoAt: (la, lo) => { const hit = nearestPin(L.latLng(la, lo)); if (hit) showPhotoFlight(hit.m); return hit && { d: hit.d, kind: hit.m._ppc && hit.m._ppc.kind, id: ((hit.m._ppc.flights||[])[0]||{}).id }; }, nearestTrack, selectTrackFromMap, listSelectedYearFlights, browseAll: () => browseAll, selectTrackAt: (la, lo) => { const t = nearestTrack(L.latLng(la, lo)); if (t) selectTrackFromMap(t.f); return t && { d: t.d, id: t.f.id }; }, openFlightLink, applyHash, flightShareUrl, shareLink, locateMe, lastCopied: () => lastCopied, hereMarker: () => hereMarker, onlyThis: () => onlyThis, setOnlyThis, showBestOf: () => SHOW_BEST_OF };
+  window.__site = { setPick, select, hits: () => lastHits, setAllTracks, drawAllTracks, setColorMode: m => { colorMode = m === 'year' ? 'year' : 'single'; applyColorChange(); }, colorMode: () => colorMode, allOn: () => allOn, setYearSelection, yearsOn: () => [...yearsOn].sort((a, b) => a - b), setMonthSelection, monthsOn: () => [...monthsOn].sort((a, b) => a - b), setTodSelection, todOn: () => [...todOn], setHeat, heatOn: () => heatOn, applyFilters, resetFilters, visible, filtered: filteredFlights, statsEl: () => ($('stats') && $('stats').textContent), filterCount: activeFilterCount, openLightbox, closeLightbox, nearestPin, showPhotoFlight, showPhotoAt: (la, lo) => { const hit = nearestPin(L.latLng(la, lo)); if (hit) showPhotoFlight(hit.m); return hit && { d: hit.d, kind: hit.m._ppc && hit.m._ppc.kind, id: ((hit.m._ppc.flights||[])[0]||{}).id }; }, nearestTrack, selectTrackFromMap, listSelectedYearFlights, browseAll: () => browseAll, selectTrackAt: (la, lo) => { const t = nearestTrack(L.latLng(la, lo)); if (t) selectTrackFromMap(t.f); return t && { d: t.d, id: t.f.id }; }, openFlightLink, applyHash, flightShareUrl, shareLink, locateMe, lastCopied: () => lastCopied, hereMarker: () => hereMarker, onlyThis: () => onlyThis, setOnlyThis, showBestOf: () => SHOW_BEST_OF };
+  renderFilterChips();
   syncColorUi();
 })();

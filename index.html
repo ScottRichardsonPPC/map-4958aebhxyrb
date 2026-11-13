@@ -14,7 +14,7 @@
 <body>
 <header>
   <h1>Did Scott's powered parachute fly over you?</h1>
-  <p class="lede">Search an address, tap the map, or use your location to see which of Scott's flights from 2015 to 2026 passed nearby. Or turn on “Show all tracks for selected years” to see every GPS track for the years you’ve checked.</p>
+  <p class="lede">Search an address, tap the map, or use your location to see which of Scott's flights from 2015 to 2026 passed nearby. <span class="lede-extra">Or turn on All tracks to see every GPS track for the years you’ve checked.</span></p>
   <form id="search" autocomplete="off">
     <input id="q" type="search" placeholder="Address, town, or place in Indiana" aria-label="Address or place">
     <button type="submit" id="go">Search</button>
@@ -33,15 +33,34 @@
       <button type="button" id="yearsall">All</button>
       <button type="button" id="yearsnone">None</button>
     </div>
-    <button type="button" id="alltracks" aria-pressed="false">Show all tracks for selected years</button>
-    <div class="track-color" id="trackcolor">
+    <button type="button" id="alltracks" aria-pressed="false" title="Show all tracks for the selected years and filters">All tracks</button>
+    <button type="button" id="morebtn" aria-expanded="false" aria-controls="morepanel">Filters &amp; layers <span id="filterbadge" class="badge" hidden>0</span></button>
+  </div>
+  <div id="morepanel" class="more-panel" hidden>
+    <div class="more-row">
+      <span class="more-label">Month</span>
+      <div id="monthpresets" class="presets" role="group" aria-label="Month presets"></div>
+    </div>
+    <div id="months" class="chips" aria-label="Filter by month"></div>
+    <div class="more-row">
+      <span class="more-label">Time of day</span>
+      <div id="todpresets" class="presets" role="group" aria-label="Time-of-day presets"></div>
+    </div>
+    <div id="tods" class="chips" aria-label="Filter by time of day"></div>
+    <p class="more-hint">Times use sunrise and sunset at each flight’s location. Sunrise and sunset cover the hour before and after.</p>
+    <div class="more-row track-color" id="trackcolor">
       <span class="tc-label">Track color</span>
       <label class="tc-mode"><input type="radio" name="tcmode" value="single" checked> Single color</label>
       <input type="color" id="tccolor" value="#FFB000" aria-label="Track color">
       <label class="tc-mode"><input type="radio" name="tcmode" value="year"> Color by year</label>
     </div>
+    <div id="yearlegend" class="year-legend" hidden></div>
+    <div class="more-row">
+      <label class="heat-toggle"><input type="checkbox" id="heatmap"> Heat map of where I fly most</label>
+    </div>
+    <p class="more-actions"><button type="button" id="resetfilters" class="linkish">Reset filters</button></p>
   </div>
-  <div id="yearlegend" class="year-legend" hidden></div>
+  <div id="stats" class="stats-bar" aria-live="polite"></div>
 </header>
 <main>
   <div id="map" role="application" aria-label="Map. Tap to choose a spot."></div>
@@ -57,6 +76,7 @@
   <p>Map, satellite and topographic tiles © <a href="https://www.esri.com" target="_blank" rel="noopener">Esri</a>, HERE, Garmin, USGS, Maxar, Earthstar Geographics, <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors, and the GIS User Community. Address search by <a href="https://photon.komoot.io" target="_blank" rel="noopener">Photon</a> (komoot) with <a href="https://nominatim.org/" target="_blank" rel="noopener">Nominatim</a> as backup, both using OpenStreetMap data. Map library: <a href="https://leafletjs.com" target="_blank" rel="noopener">Leaflet</a>.</p>
 </footer>
 <script src="vendor/leaflet.js"></script>
+<script src="vendor/leaflet-heat.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
