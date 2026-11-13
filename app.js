@@ -28,6 +28,11 @@
   L.control.layers({ 'Street map': street, 'Satellite': sat, 'Topographic': topo }, overlays, { position: 'topright', collapsed: narrow }).addTo(map);
   if (L.heatLayer) {
     heatLayer = L.heatLayer([], { radius: 22, blur: 18, maxZoom: 11, minOpacity: 0.35 });
+    const _rd = heatLayer._redraw;
+    heatLayer._redraw = function () {
+      if (!this._map || !this._heat) return;
+      return _rd.call(this);
+    };
     window.PPCMAP.heatLayer = heatLayer;
   }
   const LocateCtl = L.Control.extend({
@@ -153,10 +158,7 @@
   function drawHeat() {
     if (!heatLayer) return;
     const hide = !heatOn || (onlyThis && selId);
-    if (hide) {
-      if (map.hasLayer(heatLayer)) map.removeLayer(heatLayer);
-      return;
-    }
+    if (hide) { hideHeatLayer(); return; }
     const pts = [];
     for (const f of FL) {
       if (!visible(f) || !f.simple) continue;
@@ -168,6 +170,14 @@
     [allLayer, resLayer, phLayer, hiLayer].forEach(ly => {
       if (ly && map.hasLayer(ly)) { map.removeLayer(ly); ly.addTo(map); }
     });
+  }
+  function hideHeatLayer() {
+    if (!heatLayer) return;
+    if (heatLayer._frame && L.Util && L.Util.cancelAnimFrame) {
+      L.Util.cancelAnimFrame(heatLayer._frame);
+      heatLayer._frame = null;
+    }
+    if (map.hasLayer(heatLayer)) map.removeLayer(heatLayer);
   }
   function setHeat(on) {
     heatOn = !!on;
@@ -628,7 +638,7 @@
     ensure(resLayer, !hide);
     ensure(phLayer, !hide);
     if (heatLayer) {
-      if (hide || !heatOn) { if (map.hasLayer(heatLayer)) map.removeLayer(heatLayer); }
+      if (hide || !heatOn) hideHeatLayer();
       else if (!map.hasLayer(heatLayer)) heatLayer.addTo(map);
     }
     if (map.hasLayer(hiLayer)) map.removeLayer(hiLayer);
