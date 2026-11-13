@@ -80,3 +80,7 @@ button.share-ico svg { display: block; }
 .here-dot { position: absolute; left: 6px; top: 6px; width: 12px; height: 12px; background: #1a73e8; border: 2px solid #fff; border-radius: 50%; box-shadow: 0 0 0 1px #1a73e8; }
 .here-ring { position: absolute; left: 0; top: 0; width: 24px; height: 24px; border: 2px solid #1a73e8; border-radius: 50%; opacity: .6; animation: here-pulse 1.6s ease-out infinite; }
 @keyframes here-pulse { from { transform: scale(.55); opacity: .7; } to { transform: scale(1.15); opacity: 0; } }
+
+.only-this { margin-top: 10px; }
+button.only-this-btn { display: block; width: 100%; min-height: 44px; padding: 10px 12px; font-size: 15px; line-height: 1.2; border-radius: 8px; background: #fff; color: var(--blue); text-align: center; }
+button.only-this-btn[aria-pressed="true"], button.only-this-btn.on { background: var(--blue); color: #fff; }

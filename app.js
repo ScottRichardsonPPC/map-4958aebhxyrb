@@ -46,7 +46,7 @@
   legend.addTo(map);
   const allRenderer = L.canvas({ padding: 0.5 });
   const allLayer = L.layerGroup().addTo(map);
-  let FL = [], ZONES = [], pick = null, pickMarker = null, circle = null, hereMarker = null, resLayer = L.layerGroup().addTo(map), hiLayer = L.layerGroup().addTo(map), phLayer = L.layerGroup().addTo(map), lastHits = [], selId = null, browseAll = false, ignoreHash = false, lastCopied = '';
+  let FL = [], ZONES = [], pick = null, pickMarker = null, circle = null, hereMarker = null, resLayer = L.layerGroup().addTo(map), hiLayer = L.layerGroup().addTo(map), phLayer = L.layerGroup().addTo(map), lastHits = [], selId = null, browseAll = false, onlyThis = false, ignoreHash = false, lastCopied = '';
   const SHARE_ICO = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92Z"/></svg>';
   const photoFlights = new Map();   // photo key -> flights (a post/photo can appear on more than one)
   const TAP_PX = 20;   // generous tap target for photo pins, including on a phone
@@ -286,6 +286,7 @@
 
   function run(fit) {
     if (!pick || !FL.length) return;
+    if (onlyThis) { onlyThis = false; applyOnlyThis(); }
     const rM = +$('radius').value * MI;
     if (circle) circle.remove();
     circle = L.circle(pick, { radius: rM, color: '#2f5fb3', weight: 1.5, fillOpacity: 0.06 }).addTo(map);
@@ -365,6 +366,33 @@
       map.fitBounds(b, { padding: [24, 24], maxZoom: 14 });
       if (window.innerWidth < 800) $('map').scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
+    applyOnlyThis();
+  }
+  function applyOnlyThis() {
+    const hide = !!(onlyThis && selId);
+    const ensure = (layer, show) => {
+      if (show) { if (!map.hasLayer(layer)) map.addLayer(layer); }
+      else if (map.hasLayer(layer)) map.removeLayer(layer);
+    };
+    ensure(allLayer, !hide);
+    ensure(resLayer, !hide);
+    ensure(phLayer, !hide);
+    if (map.hasLayer(hiLayer)) hiLayer.bringToFront();
+    else hiLayer.addTo(map);
+    syncOnlyThisUi();
+  }
+  function setOnlyThis(on) {
+    onlyThis = !!(on && selId);
+    applyOnlyThis();
+  }
+  function syncOnlyThisUi() {
+    document.querySelectorAll('#results .only-this').forEach(el => el.remove());
+    const row = document.querySelector('#results li.sel');
+    if (!row || !selId) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'only-this';
+    wrap.innerHTML = `<button type="button" class="only-this-btn" data-only-this aria-pressed="${onlyThis ? 'true' : 'false'}">${onlyThis ? 'Showing only this flight' : 'Show only this flight'}</button>`;
+    row.appendChild(wrap);
   }
   function openPhotoPopup(m, p) {
     if (m && m._map && typeof m.openPopup === 'function') { m.openPopup(); return true; }
@@ -417,6 +445,7 @@
     if (!pick) {
       setStatus(n ? `<b>${n}</b> track${n > 1 ? 's' : ''} for the selected year${yearsOn.size === 1 ? '' : 's'}. Search or tap the map to see which flights passed a spot, or tap a track for details.` : (yearsOn.size ? 'No tracked flights in the selected years.' : 'No years selected. Choose a year, or All, to show tracks.'));
     }
+    if (onlyThis && selId) applyOnlyThis();
   }
 
   function clearPick() {
@@ -440,12 +469,13 @@
       browseAll = false;
       if (pick) run(false);
       else {
-        if (wasBrowse) { lastHits = []; selId = null; $('results').innerHTML = ''; hiLayer.clearLayers(); }
+        if (wasBrowse) { lastHits = []; selId = null; onlyThis = false; $('results').innerHTML = ''; hiLayer.clearLayers(); applyOnlyThis(); }
         if (FL.length) setStatus(`<b>${FL.length}</b> GPS-tracked flights loaded. Search an address or tap the map, or show all tracks for the selected years.`);
       }
       return;
     }
     browseAll = true;
+    onlyThis = false;
     clearPick();
     drawAllTracks(fit);
     listSelectedYearFlights();
@@ -584,7 +614,7 @@
     const n = flights.length;
     setStatus(n ? `<b>${n}</b> flight${n > 1 ? 's' : ''} for the selected year${yearsOn.size === 1 ? '' : 's'}, newest first. Tap a track or a row for details, or tap an empty spot on the map to see which flights passed there.` : (yearsOn.size ? 'No tracked flights in the selected years.' : 'No years selected. Choose a year, or All, to show flights.'));
     if (prev && lastHits.some(h => h.f.id === prev)) select(prev, { fit: false });
-    else { selId = null; hiLayer.clearLayers(); }
+    else { selId = null; onlyThis = false; hiLayer.clearLayers(); applyOnlyThis(); }
   }
   function ensureFlightInList(f) {
     if (!f || lastHits.some(h => h.f.id === f.id)) return;
@@ -747,6 +777,13 @@
   });
   $('loc').addEventListener('click', locateMe);
   document.addEventListener('click', e => {
+    const btn = e.target.closest('[data-only-this]');
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setOnlyThis(!onlyThis);
+  });
+  document.addEventListener('click', e => {
     const btn = e.target.closest('[data-share], [data-share-url]');
     if (!btn) return;
     e.preventDefault();
@@ -760,6 +797,6 @@
     const url = btn.getAttribute('data-share-url');
     if (url) shareLink(url, btn.getAttribute('aria-label') || 'Shared link');
   });
-  window.__site = { setPick, select, hits: () => lastHits, setAllTracks, drawAllTracks, setColorMode: m => { colorMode = m === 'year' ? 'year' : 'single'; applyColorChange(); }, colorMode: () => colorMode, allOn: () => allOn, setYearSelection, yearsOn: () => [...yearsOn].sort((a, b) => a - b), nearestPin, showPhotoFlight, showPhotoAt: (la, lo) => { const hit = nearestPin(L.latLng(la, lo)); if (hit) showPhotoFlight(hit.m); return hit && { d: hit.d, kind: hit.m._ppc && hit.m._ppc.kind, id: ((hit.m._ppc.flights||[])[0]||{}).id }; }, nearestTrack, selectTrackFromMap, listSelectedYearFlights, browseAll: () => browseAll, selectTrackAt: (la, lo) => { const t = nearestTrack(L.latLng(la, lo)); if (t) selectTrackFromMap(t.f); return t && { d: t.d, id: t.f.id }; }, openFlightLink, applyHash, flightShareUrl, shareLink, locateMe, lastCopied: () => lastCopied, hereMarker: () => hereMarker };
+  window.__site = { setPick, select, hits: () => lastHits, setAllTracks, drawAllTracks, setColorMode: m => { colorMode = m === 'year' ? 'year' : 'single'; applyColorChange(); }, colorMode: () => colorMode, allOn: () => allOn, setYearSelection, yearsOn: () => [...yearsOn].sort((a, b) => a - b), nearestPin, showPhotoFlight, showPhotoAt: (la, lo) => { const hit = nearestPin(L.latLng(la, lo)); if (hit) showPhotoFlight(hit.m); return hit && { d: hit.d, kind: hit.m._ppc && hit.m._ppc.kind, id: ((hit.m._ppc.flights||[])[0]||{}).id }; }, nearestTrack, selectTrackFromMap, listSelectedYearFlights, browseAll: () => browseAll, selectTrackAt: (la, lo) => { const t = nearestTrack(L.latLng(la, lo)); if (t) selectTrackFromMap(t.f); return t && { d: t.d, id: t.f.id }; }, openFlightLink, applyHash, flightShareUrl, shareLink, locateMe, lastCopied: () => lastCopied, hereMarker: () => hereMarker, onlyThis: () => onlyThis, setOnlyThis };
   syncColorUi();
 })();
