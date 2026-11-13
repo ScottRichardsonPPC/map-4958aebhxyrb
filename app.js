@@ -40,7 +40,7 @@
       });
       let s0 = 90, n0 = -90, w0 = 180, e0 = -180;
       for (const g of segs) for (let i = 0; i < g.la.length; i++) { if (g.la[i] < s0) s0 = g.la[i]; if (g.la[i] > n0) n0 = g.la[i]; if (g.lo[i] < w0) w0 = g.lo[i]; if (g.lo[i] > e0) e0 = g.lo[i]; }
-      const pp = (f.pp || []).map(p => ({ t: p[0], la: p[1] / 1e5, lo: p[2] / 1e5, id: p[3], hi: !!p[4] })).filter(p => !inZone(p.la, p.lo));
+      const pp = (f.pp || []).map(p => ({ t: p[0], la: p[1] / 1e5, lo: p[2] / 1e5, id: p[3], hi: !!p[4], u: p[5] || '' })).filter(p => !inZone(p.la, p.lo));
       const bp = (f.bp || []).map(p => ({ t: p[0], la: p[1] / 1e5, lo: p[2] / 1e5, r: p[3], pk: p[4], hd: p[5], agl: p[6], sub: p[7] || [], u: p[8] })).filter(p => !inZone(p.la, p.lo));
       return Object.assign(f, { y: +f.d.slice(0, 4), segs, pp, bp, bb: [s0, w0, n0, e0] });
     });
@@ -114,8 +114,17 @@
       const near = f.pp.filter(p => hav(p.la, p.lo, pick[0], pick[1]) <= rM).sort((a, b) => hav(a.la, a.lo, pick[0], pick[1]) - hav(b.la, b.lo, pick[0], pick[1]));
       near.slice(0, 60).forEach(p => photoPin(p, phLayer, 5));
       let ph = '';
-      if (near.length) ph += `<div class="photos">📷 <b>${near.length} photo${near.length > 1 ? 's' : ''} taken within ${$('radius').selectedOptions[0].textContent}</b>: ` +
-        near.slice(0, 6).map(p => `<a href="${photoUrl(p.id)}" target="_blank" rel="noopener">${fmtTime(p.t)}</a> (${fmtDist(hav(p.la, p.lo, pick[0], pick[1]))})`).join(' · ') + (near.length > 6 ? ` · +${near.length - 6} more on the map` : '') + '</div>';
+      if (near.length) {
+        const seen = new Set();
+        const postLinks = [];
+        for (const p of near) {
+          const u = photoUrl(p);
+          if (u && !seen.has(u)) { seen.add(u); postLinks.push(u); }
+        }
+        ph += `<div class="photos">📷 <b>${near.length} photo${near.length > 1 ? 's' : ''} taken within ${$('radius').selectedOptions[0].textContent}</b>: ` +
+          near.slice(0, 6).map(p => `${fmtTime(p.t)} (${fmtDist(hav(p.la, p.lo, pick[0], pick[1]))})`).join(' · ') + (near.length > 6 ? ` · +${near.length - 6} more on the map` : '') +
+          '<br>' + postLinks.map(u => `<a href="${esc(u)}" target="_blank" rel="noopener">View Facebook post</a>`).join(' · ') + '</div>';
+      }
       if ((f.ph || []).length) ph += `<div class="photos">Facebook photo post${f.ph.length > 1 ? 's' : ''} from this flight: ` + f.ph.slice(0, 4).map(p => `<a href="${esc(p.u)}" target="_blank" rel="noopener">${fmtDate(p.pd)}</a> (${p.n} photo${p.n > 1 ? 's' : ''})`).join(' · ') + (f.ph.length > 4 ? ` · +${f.ph.length - 4} more` : '') + '</div>';
       if (f.lr) ph += `<div class="photos lr">🖼️ ${f.lr.n.toLocaleString()} photo${f.lr.n > 1 ? 's' : ''} in Scott's photo library from this flight` + (f.lr.np ? ` (${f.lr.np} posted)` : '') + (f.bp.length ? `, ${f.bp.length} best-of (4–5★, posted) shown on the map when selected` : '') +
         (f.lr.lab ? ` · ${esc(f.lr.lab)}` : '') + (f.lr.sub.length ? `<br><span class="note">Possible subjects (a guess from the camera's direction): ${f.lr.sub.map(esc).join(', ')}</span>` : '') + '</div>';
@@ -142,10 +151,14 @@
     if (window.innerWidth < 800) $('map').scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
-  function photoUrl(id) { return 'https://www.facebook.com/photo.php?fbid=' + encodeURIComponent(id); }
+  function photoUrl(p) {
+    if (p && p.u) return p.u;
+    const id = (p && (p.id !== undefined)) ? p.id : p;
+    return 'https://www.facebook.com/photo.php?fbid=' + encodeURIComponent(id);
+  }
   function photoPin(p, layer, r) {
     L.circleMarker([p.la, p.lo], { radius: r, color: '#7b2cbf', weight: 1.5, fillColor: '#c77dff', fillOpacity: 0.9 })
-      .bindPopup(`📷 Photo taken about ${fmtTime(p.t)} ET, ${new Date(p.t * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' })}<br><a href="${photoUrl(p.id)}" target="_blank" rel="noopener">Open on Facebook</a>`).addTo(layer);
+      .bindPopup(`📷 Photo taken about ${fmtTime(p.t)} ET, ${new Date(p.t * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' })}<br><a href="${esc(photoUrl(p))}" target="_blank" rel="noopener">View Facebook post</a>`).addTo(layer);
   }
 
   function bestStyle(p) {
@@ -159,7 +172,7 @@
     L.circleMarker([p.la, p.lo], bestStyle(p))
       .bindPopup(`⭐ Best-of photo (${label}), about ${fmtTime(p.t)} ET, ${d}<br>Aircraft position when taken${bits ? ' · ' + bits : ''}` +
         (p.sub.length ? `<br><i>Possible subjects (guess): ${p.sub.map(esc).join(', ')}</i>` : '') +
-        (p.u ? `<br><a href="${esc(p.u)}" target="_blank" rel="noopener">Open on Facebook</a>` : '<br>Not posted online') + `<br><span style="color:#666">${esc(f.ac)} flight, ${fmtDate(f.d)}</span>`).addTo(layer);
+        (p.u ? `<br><a href="${esc(p.u)}" target="_blank" rel="noopener">View Facebook post</a>` : '<br>Not posted online') + `<br><span style="color:#666">${esc(f.ac)} flight, ${fmtDate(f.d)}</span>`).addTo(layer);
   }
 
   // ---------- inputs
