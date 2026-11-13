@@ -2,9 +2,9 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
 <base href="/map-4958aebhxyrb/">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Did Scott's powered parachute fly over you?</title>
 <meta name="description" content="Search an address or tap the map to see which of Scott Richardson's powered parachute flights (2015–2026) passed nearby.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E%F0%9F%AA%82%3C/text%3E%3C/svg%3E">
@@ -14,7 +14,7 @@
 <body>
 <header>
   <h1>Did Scott's powered parachute fly over you?</h1>
-  <p class="lede">Search an address, tap the map, or use your location to see which of Scott's flights from 2015 to 2026 passed nearby. <span class="lede-extra">Or turn on All tracks to see every GPS track for the years you’ve checked.</span></p>
+  <p class="lede">Search an address, tap the map, or use your location to see which of Scott's flights from 2015 to 2026 passed nearby. <span class="lede-extra">Or turn on Show all tracks to see every GPS track for the years you’ve checked.</span></p>
   <form id="search" autocomplete="off">
     <input id="q" type="search" placeholder="Address, town, or place in Indiana" aria-label="Address or place">
     <button type="submit" id="go">Search</button>
@@ -28,23 +28,39 @@
         <option value="1">1 mile</option>
       </select>
     </label>
-    <div id="years" class="years" aria-label="Filter by year"></div>
-    <div class="year-ops" role="group" aria-label="Select years">
-      <button type="button" id="yearsall">All</button>
-      <button type="button" id="yearsnone">None</button>
+    <div class="year-group" id="yeargroup">
+      <span class="year-group-label" id="yeargrouplabel">Years</span>
+      <button type="button" id="yearmenu" class="year-menu" aria-expanded="false" aria-controls="yearpop" aria-haspopup="true">
+        <span id="yearmenusum">All years</span>
+      </button>
+      <div id="yearpop" class="year-pop">
+        <div id="years" class="years" aria-label="Filter by year"></div>
+        <div class="year-ops" role="group" aria-label="Select years">
+          <button type="button" id="yearsall">All years</button>
+          <button type="button" id="yearsnone">No years</button>
+        </div>
+      </div>
     </div>
-    <button type="button" id="alltracks" aria-pressed="false" title="Show all tracks for the selected years and filters">All tracks</button>
+    <button type="button" id="alltracks" aria-pressed="false" title="Show all GPS tracks for the selected years and filters">Show all tracks</button>
     <button type="button" id="morebtn" aria-expanded="false" aria-controls="morepanel">Filters &amp; layers <span id="filterbadge" class="badge" hidden>0</span></button>
   </div>
   <div id="morepanel" class="more-panel" hidden>
     <div class="more-row">
       <span class="more-label">Month</span>
       <div id="monthpresets" class="presets" role="group" aria-label="Month presets"></div>
+      <div class="chip-ops" role="group" aria-label="Select months">
+        <button type="button" id="monthsall">All months</button>
+        <button type="button" id="monthsnone">No months</button>
+      </div>
     </div>
     <div id="months" class="chips" aria-label="Filter by month"></div>
     <div class="more-row">
       <span class="more-label">Time of day</span>
       <div id="todpresets" class="presets" role="group" aria-label="Time-of-day presets"></div>
+      <div class="chip-ops" role="group" aria-label="Select times of day">
+        <button type="button" id="todall">All times</button>
+        <button type="button" id="todnone">No times</button>
+      </div>
     </div>
     <div id="tods" class="chips" aria-label="Filter by time of day"></div>
     <p class="more-hint">Times use sunrise and sunset at each flight’s location. Sunrise and sunset cover the hour before and after.</p>

@@ -262,8 +262,31 @@
     setMonthSelection([1,2,3,4,5,6,7,8,9,10,11,12]);
     setTodSelection(TODS.slice());
   }
+  function yearMenuLabel() {
+    const yrs = [...yearsOn].sort((a, b) => a - b);
+    const all = [...new Set(FL.map(f => f.y))].sort((a, b) => a - b);
+    if (!yrs.length) return 'No years';
+    if (all.length && yrs.length === all.length && yrs.every((y, i) => y === all[i])) return 'All years';
+    if (yrs.length === 1) return String(yrs[0]);
+    const contig = yrs.every((y, i) => i === 0 || y === yrs[i - 1] + 1);
+    if (contig) return yrs[0] + '–' + yrs[yrs.length - 1];
+    if (yrs.length <= 3) return yrs.join(', ');
+    return yrs.length + ' years';
+  }
+  function syncYearMenu() {
+    const sum = $('yearmenusum');
+    if (sum) sum.textContent = yearMenuLabel();
+    const btn = $('yearmenu');
+    if (btn) btn.setAttribute('aria-label', 'Years: ' + yearMenuLabel());
+  }
+  function setYearMenuOpen(on) {
+    const group = $('yeargroup'), btn = $('yearmenu');
+    if (group) group.classList.toggle('open', !!on);
+    if (btn) btn.setAttribute('aria-expanded', on ? 'true' : 'false');
+  }
   function applyFilters() {
     updateFilterBadge();
+    syncYearMenu();
     updateStats();
     drawHeat();
     renderYearLegend();
@@ -370,6 +393,7 @@
       applyFilters();
     });
     renderFilterChips();
+    syncYearMenu();
     syncColorUi();
     updateStats();
     setStatus(`<b>${FL.length}</b> GPS-tracked flights loaded. Search an address or tap the map, or turn on All tracks.`);
@@ -1000,12 +1024,30 @@
   $('alltracks').addEventListener('click', () => setAllTracks(!allOn, true));
   $('yearsall').addEventListener('click', () => setYearSelection(true));
   $('yearsnone').addEventListener('click', () => setYearSelection(false));
+  const yearmenu = $('yearmenu');
+  if (yearmenu) yearmenu.addEventListener('click', ev => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    const open = !$('yeargroup') || !$('yeargroup').classList.contains('open');
+    setYearMenuOpen(open);
+  });
+  document.addEventListener('click', e => {
+    const group = $('yeargroup');
+    if (group && group.classList.contains('open') && !group.contains(e.target)) setYearMenuOpen(false);
+  });
+  const monthsall = $('monthsall'), monthsnone = $('monthsnone');
+  if (monthsall) monthsall.addEventListener('click', () => setMonthSelection([1,2,3,4,5,6,7,8,9,10,11,12]));
+  if (monthsnone) monthsnone.addEventListener('click', () => setMonthSelection([]));
+  const todall = $('todall'), todnone = $('todnone');
+  if (todall) todall.addEventListener('click', () => setTodSelection(TODS.slice()));
+  if (todnone) todnone.addEventListener('click', () => setTodSelection([]));
   const morebtn = $('morebtn');
   if (morebtn) morebtn.addEventListener('click', () => {
     const panel = $('morepanel');
     const open = panel.hidden;
     panel.hidden = !open;
     morebtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) setYearMenuOpen(false);
   });
   const reset = $('resetfilters');
   if (reset) reset.addEventListener('click', resetFilters);
@@ -1078,7 +1120,11 @@
       return;
     }
   });
-  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    closeLightbox();
+    setYearMenuOpen(false);
+  });
   document.addEventListener('click', e => {
     const btn = e.target.closest('[data-share], [data-share-url]');
     if (!btn) return;
@@ -1093,7 +1139,7 @@
     const url = btn.getAttribute('data-share-url');
     if (url) shareLink(url, btn.getAttribute('aria-label') || 'Shared link');
   });
-  window.__site = { setPick, select, hits: () => lastHits, setAllTracks, drawAllTracks, setColorMode: m => { colorMode = m === 'year' ? 'year' : 'single'; applyColorChange(); }, colorMode: () => colorMode, allOn: () => allOn, setYearSelection, yearsOn: () => [...yearsOn].sort((a, b) => a - b), setMonthSelection, monthsOn: () => [...monthsOn].sort((a, b) => a - b), setTodSelection, todOn: () => [...todOn], setHeat, heatOn: () => heatOn, applyFilters, resetFilters, visible, filtered: filteredFlights, statsEl: () => ($('stats') && $('stats').textContent), filterCount: activeFilterCount, openLightbox, closeLightbox, nearestPin, showPhotoFlight, showPhotoAt: (la, lo) => { const hit = nearestPin(L.latLng(la, lo)); if (hit) showPhotoFlight(hit.m); return hit && { d: hit.d, kind: hit.m._ppc && hit.m._ppc.kind, id: ((hit.m._ppc.flights||[])[0]||{}).id }; }, nearestTrack, selectTrackFromMap, listSelectedYearFlights, browseAll: () => browseAll, selectTrackAt: (la, lo) => { const t = nearestTrack(L.latLng(la, lo)); if (t) selectTrackFromMap(t.f); return t && { d: t.d, id: t.f.id }; }, openFlightLink, applyHash, flightShareUrl, shareLink, locateMe, lastCopied: () => lastCopied, hereMarker: () => hereMarker, onlyThis: () => onlyThis, setOnlyThis, showBestOf: () => SHOW_BEST_OF, heatCount: () => (heatLayer && heatLayer._latlngs && heatLayer._latlngs.length) || 0 };
+  window.__site = { setPick, select, hits: () => lastHits, setAllTracks, drawAllTracks, setColorMode: m => { colorMode = m === 'year' ? 'year' : 'single'; applyColorChange(); }, colorMode: () => colorMode, allOn: () => allOn, setYearSelection, yearsOn: () => [...yearsOn].sort((a, b) => a - b), yearMenuLabel, setYearMenuOpen, yearMenuOpen: () => !!( $('yeargroup') && $('yeargroup').classList.contains('open') ), setMonthSelection, monthsOn: () => [...monthsOn].sort((a, b) => a - b), setTodSelection, todOn: () => [...todOn], setHeat, heatOn: () => heatOn, applyFilters, resetFilters, visible, filtered: filteredFlights, statsEl: () => ($('stats') && $('stats').textContent), filterCount: activeFilterCount, openLightbox, closeLightbox, nearestPin, showPhotoFlight, showPhotoAt: (la, lo) => { const hit = nearestPin(L.latLng(la, lo)); if (hit) showPhotoFlight(hit.m); return hit && { d: hit.d, kind: hit.m._ppc && hit.m._ppc.kind, id: ((hit.m._ppc.flights||[])[0]||{}).id }; }, nearestTrack, selectTrackFromMap, listSelectedYearFlights, browseAll: () => browseAll, selectTrackAt: (la, lo) => { const t = nearestTrack(L.latLng(la, lo)); if (t) selectTrackFromMap(t.f); return t && { d: t.d, id: t.f.id }; }, openFlightLink, applyHash, flightShareUrl, shareLink, locateMe, lastCopied: () => lastCopied, hereMarker: () => hereMarker, onlyThis: () => onlyThis, setOnlyThis, showBestOf: () => SHOW_BEST_OF, heatCount: () => (heatLayer && heatLayer._latlngs && heatLayer._latlngs.length) || 0 };
   renderFilterChips();
   syncColorUi();
 })();
