@@ -23,6 +23,7 @@
   const bestLayer = L.layerGroup();
   window.PPCMAP = { map, bestLayer };
   const overlays = SHOW_BEST_OF ? { 'Best-of photos (4–5★)': bestLayer } : {};
+  let heatLayer = null;
   const narrow = window.matchMedia('(max-width: 800px)').matches;
   L.control.layers({ 'Street map': street, 'Satellite': sat, 'Topographic': topo }, overlays, { position: 'topright', collapsed: narrow }).addTo(map);
   if (L.heatLayer) heatLayer = L.heatLayer([], { radius: 22, blur: 18, maxZoom: 11, minOpacity: 0.35 });
@@ -71,7 +72,7 @@
   ];
   const monthsOn = new Set([1,2,3,4,5,6,7,8,9,10,11,12]);
   const todOn = new Set(TODS);
-  let heatOn = false, heatLayer = null;
+  let heatOn = false;
   let allOn = false, colorMode = 'single', trackColor = DEFAULT_COLOR, yearColors = Object.assign({}, YEAR_DEFAULTS);
 
   try {
@@ -322,7 +323,7 @@
   // ---------- data
   (window.FLIGHTS_DATA ? Promise.resolve(window.FLIGHTS_DATA) : fetch('data/flights.json').then(r => r.json())).then(D => {   // offline build sets FLIGHTS_DATA via data/flights.js
     ZONES = D.zones || [];
-    if (ZONES.length) document.getElementById('privacy').textContent = ' For privacy, a few private areas are left out of the tracks and photos.';
+    if (ZONES.length) document.getElementById('privacy').textContent = ' For privacy, areas around airports and private sites, and the start and end of each flight, are left out.';
     FL = D.flights.map(f => {
       const segs = f.s.map(s => {
         const n = s.length / 4, t = new Float64Array(n), la = new Float64Array(n), lo = new Float64Array(n), ag = new Float32Array(n);
