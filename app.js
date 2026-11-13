@@ -61,7 +61,7 @@
   // ---------- data
   (window.FLIGHTS_DATA ? Promise.resolve(window.FLIGHTS_DATA) : fetch('data/flights.json').then(r => r.json())).then(D => {   // offline build sets FLIGHTS_DATA via data/flights.js
     ZONES = D.zones || [];
-    if (ZONES.length) document.getElementById('privacy').textContent = ' For privacy, areas around airports and private sites, and the start and end of each flight, are left out.';
+    if (ZONES.length) document.getElementById('privacy').textContent = ' For privacy, a few private areas are left out of the tracks and photos.';
     FL = D.flights.map(f => {
       const segs = f.s.map(s => {
         const n = s.length / 4, t = new Float64Array(n), la = new Float64Array(n), lo = new Float64Array(n), ag = new Float32Array(n);
@@ -87,9 +87,7 @@
     $('years').innerHTML = yrs.map(y => `<label><input type="checkbox" value="${y}" checked>${y}</label>`).join('');
     $('years').addEventListener('change', e => {
       const y = +e.target.value; e.target.checked ? yearsOn.add(y) : yearsOn.delete(y); e.target.parentNode.classList.toggle('off', !e.target.checked);
-      renderYearLegend();
-      drawAllTracks(false);
-      run();
+      applyYearFilter();
     });
     syncColorUi();
     setStatus(`<b>${FL.length}</b> GPS-tracked flights loaded. Search an address or tap the map, or show all tracks for the selected years.`);
@@ -182,6 +180,7 @@
     if (fit) map.fitBounds(circle.getBounds(), { maxZoom: 15, padding: [20, 20] });
     resLayer.clearLayers(); hiLayer.clearLayers(); phLayer.clearLayers(); $('results').innerHTML = ''; selId = null;
     if (inZone(pick[0], pick[1])) { lastHits = []; setStatus('No flight data shown for this area.'); return; }
+    if (!yearsOn.size) { lastHits = []; setStatus('No years selected. Choose a year, or All, to see flights near this spot.'); return; }
     const t0 = performance.now();
     lastHits = [];
     for (const f of FL) { if (!yearsOn.has(f.y)) continue; const c = closest(f, pick[0], pick[1], rM); if (c) lastHits.push({ f, c }); }
@@ -257,7 +256,7 @@
       try { map.fitBounds(L.featureGroup(lines).getBounds(), { padding: [24, 24], maxZoom: 11 }); } catch (_) {}
     }
     if (!pick) {
-      setStatus(n ? `<b>${n}</b> track${n > 1 ? 's' : ''} for the selected year${yearsOn.size === 1 ? '' : 's'}. Search or tap the map to see which flights passed a spot, or tap a track for details.` : 'No tracked flights in the selected years.');
+      setStatus(n ? `<b>${n}</b> track${n > 1 ? 's' : ''} for the selected year${yearsOn.size === 1 ? '' : 's'}. Search or tap the map to see which flights passed a spot, or tap a track for details.` : (yearsOn.size ? 'No tracked flights in the selected years.' : 'No years selected. Choose a year, or All, to show tracks.'));
     }
   }
 
@@ -290,6 +289,20 @@
     drawAllTracks(false);
     if (pick) run(false);
   }
+  function applyYearFilter() {
+    renderYearLegend();
+    drawAllTracks(false);
+    run();
+  }
+  function setYearSelection(on) {
+    yearsOn.clear();
+    document.querySelectorAll('#years input[type=checkbox]').forEach(b => {
+      b.checked = !!on;
+      b.parentNode.classList.toggle('off', !b.checked);
+      if (b.checked) yearsOn.add(+b.value);
+    });
+    applyYearFilter();
+  }
 
   function photoUrl(p) {
     if (p && p.u) return p.u;
@@ -319,6 +332,8 @@
   map.on('click', e => setPick(e.latlng.lat, e.latlng.lng, false));
   $('radius').addEventListener('change', () => run(true));
   $('alltracks').addEventListener('click', () => setAllTracks(!allOn, true));
+  $('yearsall').addEventListener('click', () => setYearSelection(true));
+  $('yearsnone').addEventListener('click', () => setYearSelection(false));
   document.querySelectorAll('input[name="tcmode"]').forEach(r => r.addEventListener('change', e => {
     if (!e.target.checked) return;
     colorMode = e.target.value === 'year' ? 'year' : 'single';
@@ -358,6 +373,6 @@
     setStatus('Finding your location…');
     navigator.geolocation.getCurrentPosition(p => setPick(p.coords.latitude, p.coords.longitude, true), () => setStatus('Could not get your location. Search an address or tap the map.'), { enableHighAccuracy: true, timeout: 10000 });
   });
-  window.__site = { setPick, select, hits: () => lastHits, setAllTracks, drawAllTracks, setColorMode: m => { colorMode = m === 'year' ? 'year' : 'single'; applyColorChange(); }, colorMode: () => colorMode, allOn: () => allOn };
+  window.__site = { setPick, select, hits: () => lastHits, setAllTracks, drawAllTracks, setColorMode: m => { colorMode = m === 'year' ? 'year' : 'single'; applyColorChange(); }, colorMode: () => colorMode, allOn: () => allOn, setYearSelection, yearsOn: () => [...yearsOn].sort((a, b) => a - b) };
   syncColorUi();
 })();
