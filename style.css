@@ -52,3 +52,17 @@ footer a { color: var(--blue); }
 .marker-cluster-gold div { background-color: rgba(154, 107, 0, 0.85); color: #fff; }
 .marker-cluster-star3 { background-color: rgba(255, 233, 168, 0.55); }
 .marker-cluster-star3 div { background-color: rgba(201, 162, 39, 0.8); color: #fff; }
+
+button#alltracks { background: #fff; color: var(--blue); }
+button#alltracks[aria-pressed="true"], button#alltracks.on { background: var(--blue); color: #fff; }
+.track-color { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.track-color .tc-label { font-weight: 600; }
+.track-color .tc-mode { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; user-select: none; }
+#tccolor { width: 36px; height: 28px; padding: 0; border: 1px solid #c8d0dd; border-radius: 4px; background: #fff; cursor: pointer; }
+#tccolor:disabled { opacity: .45; cursor: default; }
+.year-legend { display: flex; flex-wrap: wrap; gap: 6px 10px; margin: 8px 0 0; font-size: .85rem; }
+.year-legend[hidden] { display: none; }
+.year-legend .yl { display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; border: 1px solid #c8d0dd; border-radius: 999px; background: #fff; }
+.year-legend input[type=color] { width: 28px; height: 22px; padding: 0; border: 1px solid #c8d0dd; border-radius: 4px; background: #fff; cursor: pointer; }
+.flight-pop .vid, .flight-pop .photos { text-align: left; }
+.leaflet-popup-content .note { display: block; color: #5b6577; font-size: .8rem; margin-top: 1px; }

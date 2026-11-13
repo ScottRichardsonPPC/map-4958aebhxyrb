@@ -1,6 +1,14 @@
 (() => {
   'use strict';
   const MI = 1609.344, NOTE = 'Video may not include every part of this flight; the section over your location might not have been filmed or kept.';
+  const LS_MODE = 'ppc-track-color-mode', LS_COLOR = 'ppc-track-color', LS_YEARS = 'ppc-track-year-colors';
+  const DEFAULT_COLOR = '#FFB000';
+  // High-contrast defaults that stay visible on satellite imagery and on the street map.
+  const YEAR_DEFAULTS = {
+    2015: '#F5D000', 2016: '#FF6A00', 2017: '#E31C3D', 2018: '#00C2E0',
+    2019: '#5CDB00', 2020: '#FF2BD6', 2021: '#3D8BFF', 2022: '#B56BFF',
+    2023: '#FF9F1C', 2024: '#00E39A', 2025: '#FF5C8A', 2026: '#F4F4F0'
+  };
   const $ = id => document.getElementById(id);
   const map = L.map('map', { zoomControl: true, preferCanvas: true }).setView([39.6, -85.85], 10);
   // Base maps that work without a Referer (file:// offline copy) and without a key. OSM's own tile servers block Referer-less requests.
@@ -21,8 +29,34 @@
     return d;
   };
   legend.addTo(map);
+  const allRenderer = L.canvas({ padding: 0.5 });
+  const allLayer = L.layerGroup().addTo(map);
   let FL = [], ZONES = [], pick = null, pickMarker = null, circle = null, resLayer = L.layerGroup().addTo(map), hiLayer = L.layerGroup().addTo(map), phLayer = L.layerGroup().addTo(map), lastHits = [], selId = null;
   const yearsOn = new Set();
+  let allOn = false, colorMode = 'single', trackColor = DEFAULT_COLOR, yearColors = Object.assign({}, YEAR_DEFAULTS);
+
+  try {
+    const m = localStorage.getItem(LS_MODE);
+    if (m === 'single' || m === 'year') colorMode = m;
+    const c = localStorage.getItem(LS_COLOR);
+    if (c && /^#[0-9A-Fa-f]{6}$/.test(c)) trackColor = c;
+    const y = JSON.parse(localStorage.getItem(LS_YEARS) || 'null');
+    if (y && typeof y === 'object') {
+      for (const k of Object.keys(YEAR_DEFAULTS)) {
+        const v = y[k] || y[+k];
+        if (typeof v === 'string' && /^#[0-9A-Fa-f]{6}$/.test(v)) yearColors[k] = v;
+      }
+    }
+  } catch (_) {}
+
+  function saveColors() {
+    try {
+      localStorage.setItem(LS_MODE, colorMode);
+      localStorage.setItem(LS_COLOR, trackColor);
+      localStorage.setItem(LS_YEARS, JSON.stringify(yearColors));
+    } catch (_) {}
+  }
+  const colorForYear = y => colorMode === 'year' ? (yearColors[y] || YEAR_DEFAULTS[y] || trackColor) : trackColor;
 
   // ---------- data
   (window.FLIGHTS_DATA ? Promise.resolve(window.FLIGHTS_DATA) : fetch('data/flights.json').then(r => r.json())).then(D => {   // offline build sets FLIGHTS_DATA via data/flights.js
@@ -42,14 +76,23 @@
       for (const g of segs) for (let i = 0; i < g.la.length; i++) { if (g.la[i] < s0) s0 = g.la[i]; if (g.la[i] > n0) n0 = g.la[i]; if (g.lo[i] < w0) w0 = g.lo[i]; if (g.lo[i] > e0) e0 = g.lo[i]; }
       const pp = (f.pp || []).map(p => ({ t: p[0], la: p[1] / 1e5, lo: p[2] / 1e5, id: p[3], hi: !!p[4], u: p[5] || '' })).filter(p => !inZone(p.la, p.lo));
       const bp = (f.bp || []).map(p => ({ t: p[0], la: p[1] / 1e5, lo: p[2] / 1e5, r: p[3], pk: p[4], hd: p[5], agl: p[6], sub: p[7] || [], u: p[8] })).filter(p => !inZone(p.la, p.lo));
-      return Object.assign(f, { y: +f.d.slice(0, 4), segs, pp, bp, bb: [s0, w0, n0, e0] });
+      const f2 = Object.assign(f, { y: +f.d.slice(0, 4), segs, pp, bp, bb: [s0, w0, n0, e0] });
+      f2.st = flightStats(f2);
+      f2.simple = simplePath(f2);
+      return f2;
     });
     FL.forEach(f => f.bp.forEach(p => bestPin(p, f, bestLayer)));
     const yrs = [...new Set(FL.map(f => f.y))].sort();
     yrs.forEach(y => yearsOn.add(y));
     $('years').innerHTML = yrs.map(y => `<label><input type="checkbox" value="${y}" checked>${y}</label>`).join('');
-    $('years').addEventListener('change', e => { const y = +e.target.value; e.target.checked ? yearsOn.add(y) : yearsOn.delete(y); e.target.parentNode.classList.toggle('off', !e.target.checked); run(); });
-    setStatus(`<b>${FL.length}</b> GPS-tracked flights loaded. Search an address or tap the map.`);
+    $('years').addEventListener('change', e => {
+      const y = +e.target.value; e.target.checked ? yearsOn.add(y) : yearsOn.delete(y); e.target.parentNode.classList.toggle('off', !e.target.checked);
+      renderYearLegend();
+      drawAllTracks(false);
+      run();
+    });
+    syncColorUi();
+    setStatus(`<b>${FL.length}</b> GPS-tracked flights loaded. Search an address or tap the map, or show all tracks for the selected years.`);
     const h = new URLSearchParams(location.hash.slice(1));
     if (h.get('lat') && h.get('lon')) setPick(+h.get('lat'), +h.get('lon'), true);
   }).catch(() => setStatus('Could not load the flight data. Please reload the page.'));
@@ -62,6 +105,34 @@
   const fmtDate = d => new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
   const fmtTime = t => new Date(t * 1000).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' });
   const fmtDist = m => { const mi = m / MI; return mi < 0.1 ? `${Math.round(m * 3.281 / 10) * 10} ft` : `${mi.toFixed(2)} mi`; };
+
+  function flightStats(f) {
+    let t0 = Infinity, t1 = -Infinity, dist = 0, maxAg = -Infinity, hasAg = false;
+    for (const g of f.segs) {
+      const n = g.la.length;
+      if (n) { t0 = Math.min(t0, g.t[0]); t1 = Math.max(t1, g.t[n - 1]); }
+      for (let i = 0; i < n; i++) {
+        if (i) dist += hav(g.la[i - 1], g.lo[i - 1], g.la[i], g.lo[i]);
+        if (isFinite(g.ag[i])) { hasAg = true; if (g.ag[i] > maxAg) maxAg = g.ag[i]; }
+      }
+    }
+    return { t0, t1, dist, maxAg, hasAg };
+  }
+  function simplePath(f) {
+    const MIN_M = 280, out = [];
+    for (const g of f.segs) {
+      const n = g.la.length;
+      if (n < 2) continue;
+      const pts = [[g.la[0], g.lo[0]]];
+      for (let i = 1; i < n - 1; i++) {
+        const p = pts[pts.length - 1];
+        if (hav(p[0], p[1], g.la[i], g.lo[i]) >= MIN_M) pts.push([g.la[i], g.lo[i]]);
+      }
+      pts.push([g.la[n - 1], g.lo[n - 1]]);
+      if (pts.length >= 2) out.push(pts);
+    }
+    return out;
+  }
 
   // closest approach of flight f to (la0, lo0), in meters (equirectangular around the pick)
   function closest(f, la0, lo0, rM) {
@@ -81,6 +152,19 @@
       }
     }
     return best.d <= rM ? best : null;
+  }
+
+  function flightPopupHtml(f) {
+    const st = f.st, mi = st.dist / MI, durH = (st.t1 - st.t0) / 3600;
+    const dur = durH >= 1 ? `${durH.toFixed(1)} h` : `${Math.max(1, Math.round((st.t1 - st.t0) / 60))} min`;
+    const ht = !(f.agl && st.hasAg) ? '' : (st.maxAg < 100 ? ' · max height under 100 ft' : ` · max about ${(Math.round(st.maxAg / 50) * 50).toLocaleString()} ft up`);
+    const vids = (f.v || []).map(v => `<div class="vid">🎥 <a href="${esc(v.u)}" target="_blank" rel="noopener">${esc(v.t)}</a>${v.c === 'low' ? ' <span class="conf">(possible match)</span>' : ''}<span class="note">${NOTE}</span></div>`).join('');
+    let ph = '';
+    if ((f.ph || []).length) {
+      ph = `<div class="photos">Facebook post${f.ph.length > 1 ? 's' : ''}: ` +
+        f.ph.map(p => `<a href="${esc(p.u)}" target="_blank" rel="noopener">${fmtDate(p.pd)}</a> (${p.n} photo${p.n > 1 ? 's' : ''})`).join(' · ') + '</div>';
+    }
+    return `<div class="flight-pop"><b>${fmtDate(f.d)}</b><br>${fmtTime(st.t0)} – ${fmtTime(st.t1)} ET · ${dur} · ${mi.toFixed(1)} mi${ht}<br>${esc(f.ac)} · ${esc(f.n)}${vids}${ph}</div>`;
   }
 
   function setPick(la, lo, fit) {
@@ -133,7 +217,8 @@
         <div class="r2">${esc(f.ac)} · ${esc(f.n)}</div>${vids}${ph}`;
       li.addEventListener('click', e => { if (e.target.tagName !== 'A') select(f.id); });
       frag.appendChild(li);
-      f.segs.forEach(g => L.polyline([...g.la].map((a, i) => [a, g.lo[i]]), { color: '#2f5fb3', weight: 1.5, opacity: 0.35, interactive: false }).addTo(resLayer));
+      const col = colorForYear(f.y);
+      f.segs.forEach(g => L.polyline([...g.la].map((a, i) => [a, g.lo[i]]), { color: col, weight: 2, opacity: 0.55, interactive: false }).addTo(resLayer));
     });
     $('results').appendChild(frag);
   }
@@ -149,6 +234,61 @@
     const b = L.featureGroup(lines).getBounds().extend(pick);
     map.fitBounds(b, { padding: [24, 24], maxZoom: 14 });
     if (window.innerWidth < 800) $('map').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function drawAllTracks(fit) {
+    allLayer.clearLayers();
+    if (!allOn || !FL.length) return;
+    const lines = [];
+    let n = 0;
+    for (const f of FL) {
+      if (!yearsOn.has(f.y)) continue;
+      n++;
+      const col = colorForYear(f.y);
+      for (const pts of f.simple) {
+        const pl = L.polyline(pts, { color: col, weight: 2.25, opacity: 0.85, renderer: allRenderer, bubblingMouseEvents: false, lineCap: 'round', lineJoin: 'round' });
+        pl.bindPopup(() => flightPopupHtml(f), { maxWidth: 340 });
+        pl.on('click', e => L.DomEvent.stopPropagation(e));
+        pl.addTo(allLayer);
+        lines.push(pl);
+      }
+    }
+    if (fit && lines.length) {
+      try { map.fitBounds(L.featureGroup(lines).getBounds(), { padding: [24, 24], maxZoom: 11 }); } catch (_) {}
+    }
+    if (!pick) {
+      setStatus(n ? `<b>${n}</b> track${n > 1 ? 's' : ''} for the selected year${yearsOn.size === 1 ? '' : 's'}. Search or tap the map to see which flights passed a spot, or tap a track for details.` : 'No tracked flights in the selected years.');
+    }
+  }
+
+  function setAllTracks(on, fit) {
+    allOn = !!on;
+    const btn = $('alltracks');
+    if (btn) { btn.setAttribute('aria-pressed', allOn ? 'true' : 'false'); btn.classList.toggle('on', allOn); }
+    if (!allOn) allLayer.clearLayers();
+    drawAllTracks(fit && allOn && !pick);
+    if (!allOn && !pick && FL.length) setStatus(`<b>${FL.length}</b> GPS-tracked flights loaded. Search an address or tap the map, or show all tracks for the selected years.`);
+  }
+
+  function syncColorUi() {
+    document.querySelectorAll('input[name="tcmode"]').forEach(r => { r.checked = r.value === colorMode; });
+    const inp = $('tccolor');
+    if (inp) { inp.value = trackColor; inp.disabled = colorMode === 'year'; }
+    renderYearLegend();
+  }
+  function renderYearLegend() {
+    const el = $('yearlegend');
+    if (!el) return;
+    if (colorMode !== 'year') { el.hidden = true; el.innerHTML = ''; return; }
+    el.hidden = false;
+    const yrs = [...yearsOn].sort((a, b) => a - b);
+    el.innerHTML = yrs.map(y => `<label class="yl"><span>${y}</span><input type="color" data-year="${y}" value="${yearColors[y] || YEAR_DEFAULTS[y]}" aria-label="Color for ${y}"></label>`).join('') || '<span class="note">Check at least one year.</span>';
+  }
+  function applyColorChange() {
+    saveColors();
+    syncColorUi();
+    drawAllTracks(false);
+    if (pick) run(false);
   }
 
   function photoUrl(p) {
@@ -178,6 +318,20 @@
   // ---------- inputs
   map.on('click', e => setPick(e.latlng.lat, e.latlng.lng, false));
   $('radius').addEventListener('change', () => run(true));
+  $('alltracks').addEventListener('click', () => setAllTracks(!allOn, true));
+  document.querySelectorAll('input[name="tcmode"]').forEach(r => r.addEventListener('change', e => {
+    if (!e.target.checked) return;
+    colorMode = e.target.value === 'year' ? 'year' : 'single';
+    applyColorChange();
+  }));
+  $('tccolor').addEventListener('input', e => {
+    const v = e.target.value;
+    if (/^#[0-9A-Fa-f]{6}$/.test(v)) { trackColor = v; applyColorChange(); }
+  });
+  $('yearlegend').addEventListener('input', e => {
+    const y = e.target.getAttribute('data-year'), v = e.target.value;
+    if (y && /^#[0-9A-Fa-f]{6}$/.test(v)) { yearColors[y] = v; applyColorChange(); }
+  });
   let lastQ = 0; const cache = new Map();
   $('search').addEventListener('submit', async e => {
     e.preventDefault();
@@ -204,5 +358,6 @@
     setStatus('Finding your location…');
     navigator.geolocation.getCurrentPosition(p => setPick(p.coords.latitude, p.coords.longitude, true), () => setStatus('Could not get your location. Search an address or tap the map.'), { enableHighAccuracy: true, timeout: 10000 });
   });
-  window.__site = { setPick, select, hits: () => lastHits };
+  window.__site = { setPick, select, hits: () => lastHits, setAllTracks, drawAllTracks, setColorMode: m => { colorMode = m === 'year' ? 'year' : 'single'; applyColorChange(); }, colorMode: () => colorMode, allOn: () => allOn };
+  syncColorUi();
 })();

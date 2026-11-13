@@ -14,7 +14,7 @@
 <body>
 <header>
   <h1>Did Scott's powered parachute fly over you?</h1>
-  <p class="lede">Search an address, tap the map, or use your location to see which of Scott's flights from 2015 to 2026 passed nearby.</p>
+  <p class="lede">Search an address, tap the map, or use your location to see which of Scott's flights from 2015 to 2026 passed nearby. Or turn on “Show all tracks for selected years” to see every GPS track for the years you’ve checked.</p>
   <form id="search" autocomplete="off">
     <input id="q" type="search" placeholder="Address, town, or place in Indiana" aria-label="Address or place">
     <button type="submit" id="go">Search</button>
@@ -29,7 +29,15 @@
       </select>
     </label>
     <div id="years" class="years" aria-label="Filter by year"></div>
+    <button type="button" id="alltracks" aria-pressed="false">Show all tracks for selected years</button>
+    <div class="track-color" id="trackcolor">
+      <span class="tc-label">Track color</span>
+      <label class="tc-mode"><input type="radio" name="tcmode" value="single" checked> Single color</label>
+      <input type="color" id="tccolor" value="#FFB000" aria-label="Track color">
+      <label class="tc-mode"><input type="radio" name="tcmode" value="year"> Color by year</label>
+    </div>
   </div>
+  <div id="yearlegend" class="year-legend" hidden></div>
 </header>
 <main>
   <div id="map" role="application" aria-label="Map. Tap to choose a spot."></div>
