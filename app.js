@@ -7,7 +7,7 @@
   const YEAR_DEFAULTS = {
     2015: '#F5D000', 2016: '#FF6A00', 2017: '#E31C3D', 2018: '#00C2E0',
     2019: '#5CDB00', 2020: '#FF2BD6', 2021: '#3D8BFF', 2022: '#B56BFF',
-    2023: '#FF9F1C', 2024: '#00E39A', 2025: '#FF5C8A', 2026: '#F4F4F0'
+    2023: '#FF9F1C', 2024: '#00E39A', 2025: '#FF5C8A', 2026: '#7A00FF'
   };
   const $ = id => document.getElementById(id);
   const map = L.map('map', { zoomControl: true, preferCanvas: true }).setView([39.6, -85.85], 10);
@@ -61,7 +61,7 @@
   // ---------- data
   (window.FLIGHTS_DATA ? Promise.resolve(window.FLIGHTS_DATA) : fetch('data/flights.json').then(r => r.json())).then(D => {   // offline build sets FLIGHTS_DATA via data/flights.js
     ZONES = D.zones || [];
-    if (ZONES.length) document.getElementById('privacy').textContent = ' For privacy, a few private areas are left out of the tracks and photos.';
+    if (ZONES.length) document.getElementById('privacy').textContent = ' For privacy, areas around airports and private sites, and the start and end of each flight, are left out.';
     FL = D.flights.map(f => {
       const segs = f.s.map(s => {
         const n = s.length / 4, t = new Float64Array(n), la = new Float64Array(n), lo = new Float64Array(n), ag = new Float32Array(n);
