@@ -377,8 +377,8 @@
     ensure(allLayer, !hide);
     ensure(resLayer, !hide);
     ensure(phLayer, !hide);
-    if (map.hasLayer(hiLayer)) hiLayer.bringToFront();
-    else hiLayer.addTo(map);
+    if (map.hasLayer(hiLayer)) map.removeLayer(hiLayer);
+    hiLayer.addTo(map);
     syncOnlyThisUi();
   }
   function setOnlyThis(on) {
