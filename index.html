@@ -2,9 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="robots" content="noindex, nofollow">
-<base href="/map-4958aebhxyrb/">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
 <title>Did Scott's powered parachute fly over you?</title>
 <meta name="description" content="Search an address or tap the map to see which of Scott Richardson's powered parachute flights (2015–2026) passed nearby.">
 <link rel="icon" href="favicon.ico" sizes="any">
@@ -76,6 +75,13 @@
     </div>
     <div id="tods" class="chips" aria-label="Filter by time of day"></div>
     <p class="more-hint">Times use sunrise and sunset at each flight’s location. Sunrise and sunset cover the hour before and after.</p>
+    <div class="more-row pax-row">
+      <label class="more-label" for="paxfilter">Passengers</label>
+      <select id="paxfilter" aria-label="Filter by passenger">
+        <option value="any">Any</option>
+        <option value="solo">Solo</option>
+      </select>
+    </div>
     <div class="more-row track-color" id="trackcolor">
       <span class="tc-label">Track color</span>
       <label class="tc-mode"><input type="radio" name="tcmode" value="single" checked> Single color</label>

@@ -164,3 +164,6 @@ button#alltracks { margin-left: 2px; }
   .year-group.open .year-pop { display: flex; }
   .year-ops { justify-content: flex-start; }
 }
+
+.pax-row select { min-width: 16rem; max-width: 28rem; flex: 1 1 16rem; }
+.r2.pax { color: var(--ink); }

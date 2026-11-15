@@ -106,9 +106,17 @@
   }
   const colorForYear = y => colorMode === 'year' ? (yearColors[y] || YEAR_DEFAULTS[y] || trackColor) : trackColor;
 
+  let paxFilter = 'any';
+  function paxNames(f) { return f.pax || []; }
+  function paxVisible(f) {
+    if (paxFilter === 'any') return true;
+    if (paxFilter === 'solo') return !paxNames(f).length;
+    return paxNames(f).includes(paxFilter);
+  }
   function visible(f) {
     if (!yearsOn.has(f.y)) return false;
     if (!monthsOn.has(f.mo || +String(f.d || '').slice(5, 7))) return false;
+    if (!paxVisible(f)) return false;
     const tod = f.tod || [];
     if (!todOn.size) return false;
     if (!tod.length) return true;
@@ -117,13 +125,14 @@
   function filteredFlights() { return FL.filter(visible); }
   function filterNarrowed() {
     const allY = new Set(FL.map(f => f.y));
-    return monthsOn.size < 12 || todOn.size < TODS.length || (allY.size && yearsOn.size < allY.size);
+    return monthsOn.size < 12 || todOn.size < TODS.length || (allY.size && yearsOn.size < allY.size) || paxFilter !== 'any';
   }
   function filterPhrase() { return filterNarrowed() ? 'the selected filters' : 'the selected years'; }
   function activeFilterCount() {
     let n = 0;
     if (monthsOn.size && monthsOn.size < 12) n++;
     if (todOn.size && todOn.size < TODS.length) n++;
+    if (paxFilter !== 'any') n++;
     return n;
   }
   function updateFilterBadge() {
@@ -142,7 +151,7 @@
     if (!el) return;
     const fs = filteredFlights();
     if (!fs.length) {
-      el.innerHTML = monthsOn.size && todOn.size && yearsOn.size ? 'No flights match these filters.' : 'No flights — choose a year, month, or time of day.';
+      el.innerHTML = monthsOn.size && todOn.size && yearsOn.size ? 'No flights match these filters.' : 'No flights — choose a year, month, time of day, or passenger.';
       return;
     }
     let hours = 0, miles = 0, maxAg = -Infinity, has = false;
@@ -259,6 +268,10 @@
     yearsOn.clear();
     yrs.forEach(y => yearsOn.add(y));
     document.querySelectorAll('#years input[type=checkbox]').forEach(b => { b.checked = true; b.parentNode.classList.remove('off'); });
+    paxFilter = 'any';
+    const paxsel = $('paxfilter');
+    if (paxsel) paxsel.value = 'any';
+    syncPaxHash();
     setMonthSelection([1,2,3,4,5,6,7,8,9,10,11,12]);
     setTodSelection(TODS.slice());
   }
@@ -359,7 +372,7 @@
   // ---------- data
   (window.FLIGHTS_DATA ? Promise.resolve(window.FLIGHTS_DATA) : fetch('data/flights.json').then(r => r.json())).then(D => {   // offline build sets FLIGHTS_DATA via data/flights.js
     ZONES = D.zones || [];
-    if (ZONES.length) document.getElementById('privacy').textContent = ' For privacy, areas around airports and private sites, and the start and end of each flight, are left out.';
+    if (ZONES.length) document.getElementById('privacy').textContent = ' For privacy, a few private areas are left out of the tracks and photos.';
     FL = D.flights.map(f => {
       const segs = f.s.map(s => {
         const n = s.length / 4, t = new Float64Array(n), la = new Float64Array(n), lo = new Float64Array(n), ag = new Float32Array(n);
@@ -393,6 +406,7 @@
       applyFilters();
     });
     renderFilterChips();
+    renderPaxFilter();
     syncYearMenu();
     syncColorUi();
     updateStats();
@@ -413,6 +427,72 @@
     ignoreHash = true;
     try { history.replaceState(null, '', s); } catch (_) {}
     setTimeout(() => { ignoreHash = false; }, 0);
+  }
+  function writeHash(parts) {
+    const items = [];
+    if (parts.f) items.push('f=' + encodeURIComponent(parts.f));
+    if (parts.lat != null && parts.lon != null) {
+      items.push('lat=' + parts.lat);
+      items.push('lon=' + parts.lon);
+    }
+    if (parts.pax && parts.pax !== 'any') items.push('pax=' + encodeURIComponent(parts.pax));
+    setHash(items.length ? '#' + items.join('&') : (location.pathname + location.search || '#').replace(/#.*$/, ''));
+  }
+  function syncPaxHash() {
+    const raw = (location.hash || '').replace(/^#/, '');
+    const h = new URLSearchParams(raw);
+    const parts = {};
+    if (h.get('f')) parts.f = h.get('f');
+    let la = h.get('lat'), lo = h.get('lon');
+    const p = h.get('p');
+    if (p && p.indexOf(',') >= 0) { const x = p.split(','); la = x[0]; lo = x[1]; }
+    if (la && lo && isFinite(+la) && isFinite(+lo)) { parts.lat = (+la).toFixed(5); parts.lon = (+lo).toFixed(5); }
+    parts.pax = paxFilter;
+    writeHash(parts);
+  }
+  function paxCounts() {
+    const c = new Map();
+    let solo = 0;
+    for (const f of FL) {
+      const names = paxNames(f);
+      if (!names.length) { solo++; continue; }
+      const seen = new Set();
+      for (const n of names) {
+        if (seen.has(n)) continue;
+        seen.add(n);
+        c.set(n, (c.get(n) || 0) + 1);
+      }
+    }
+    return { solo, names: [...c.entries()].sort((a, b) => a[0].localeCompare(b[0])) };
+  }
+  function renderPaxFilter() {
+    const sel = $('paxfilter');
+    if (!sel) return;
+    const { solo, names } = paxCounts();
+    const cur = paxFilter;
+    sel.innerHTML = `<option value="any">Any</option><option value="solo">Solo (${solo})</option>` +
+      names.map(([n, k]) => `<option value="${esc(n)}">${esc(n)} (${k})</option>`).join('');
+    if ([...sel.options].some(o => o.value === cur)) sel.value = cur;
+    else { paxFilter = 'any'; sel.value = 'any'; }
+  }
+  function setPaxFilter(val, fromHash) {
+    const allowed = new Set(['any', 'solo', ...paxCounts().names.map(x => x[0])]);
+    paxFilter = allowed.has(val) ? val : 'any';
+    const sel = $('paxfilter');
+    if (sel && [...sel.options].some(o => o.value === paxFilter)) sel.value = paxFilter;
+    if (!fromHash) syncPaxHash();
+    applyFilters();
+  }
+  function fmtPax(names) {
+    const e = (names || []).map(esc);
+    if (!e.length) return '';
+    if (e.length === 1) return e[0];
+    if (e.length === 2) return e[0] + ' and ' + e[1];
+    return e.slice(0, -1).join(', ') + ', and ' + e[e.length - 1];
+  }
+  function paxLine(f) {
+    const names = paxNames(f);
+    return names.length ? `<div class="r2 pax">with ${fmtPax(names)}</div>` : '';
   }
   function toast(msg) {
     let el = document.getElementById('toast');
@@ -470,6 +550,8 @@
     const raw = location.hash.replace(/^#/, '');
     if (!raw) return;
     const h = new URLSearchParams(raw);
+    const px = h.get('pax');
+    if (px) setPaxFilter(px, true);
     if (/(?:^|&)f=/.test(raw)) { openFlightLink(h.get('f')); return; }
     let la = h.get('lat'), lo = h.get('lon');
     const p = h.get('p');
@@ -555,14 +637,15 @@
       ph = `<div class="photos">Facebook post${f.ph.length > 1 ? 's' : ''}: ` +
         f.ph.map(p => fbLink(p.u, `${fmtDate(p.pd)}`) + ` (${p.n} photo${p.n > 1 ? 's' : ''})`).join(' · ') + '</div>';
     }
-    return `<div class="flight-pop"><b>${fmtDate(f.d)}</b> ${shareFlightBtn(f)}<br>${fmtTime(st.t0)} – ${fmtTime(st.t1)} ET · ${dur} · ${mi.toFixed(1)} mi${ht}<br>${esc(f.ac)} · ${esc(f.n)}${vidsHtml(f)}${ph}</div>`;
+    const withPax = paxNames(f).length ? `<br>with ${fmtPax(paxNames(f))}` : '';
+    return `<div class="flight-pop"><b>${fmtDate(f.d)}</b> ${shareFlightBtn(f)}<br>${fmtTime(st.t0)} – ${fmtTime(st.t1)} ET · ${dur} · ${mi.toFixed(1)} mi${ht}<br>${esc(f.ac)} · ${esc(f.n)}${withPax}${vidsHtml(f)}${ph}</div>`;
   }
 
   function setPick(la, lo, fit) {
     browseAll = false;
     pick = [la, lo];
     if (!pickMarker) pickMarker = L.marker(pick).addTo(map); else pickMarker.setLatLng(pick);
-    setHash('#lat=' + la.toFixed(5) + '&lon=' + lo.toFixed(5));
+    writeHash({ lat: la.toFixed(5), lon: lo.toFixed(5), pax: paxFilter });
     run(fit);
   }
 
@@ -633,7 +716,7 @@
   function highlightFlight(f, c, opts) {
     const fit = !opts || opts.fit !== false;
     selId = f.id;
-    setHash('#f=' + encodeURIComponent(f.id));
+    writeHash({ f: f.id, pax: paxFilter });
     hiLayer.clearLayers();
     document.querySelectorAll('#results li').forEach(li => li.classList.toggle('sel', li.dataset.id === f.id));
     const row = document.querySelector('#results li[data-id="' + (window.CSS && CSS.escape ? CSS.escape(f.id) : f.id.replace(/"/g, '')) + '"]');
@@ -929,11 +1012,11 @@
     if (c && isFinite(c.d)) {
       return `<div class="r1"><span>${fmtDate(f.d)}</span><span>${fmtDist(c.d)} away ${shareFlightBtn(f)}</span></div>
         <div class="r2">Closest about ${fmtTime(c.t)} ET · ${htC || 'height not available'}</div>
-        <div class="r2">${esc(f.ac)} · ${esc(f.n)}</div>${vids}${ph}`;
+        <div class="r2">${esc(f.ac)} · ${esc(f.n)}</div>${paxLine(f)}${vids}${ph}`;
     }
     return `<div class="r1"><span>${fmtDate(f.d)}</span><span>${mi} ${shareFlightBtn(f)}</span></div>
       <div class="r2">${fmtTime(st.t0)} – ${fmtTime(st.t1)} ET · ${dur}${htF ? ' · ' + htF : ''}</div>
-      <div class="r2">${esc(f.ac)} · ${esc(f.n)}</div>${vids}${ph}`;
+      <div class="r2">${esc(f.ac)} · ${esc(f.n)}</div>${paxLine(f)}${vids}${ph}`;
   }
   function presentFlights(flights, status, opts) {
     $('results').innerHTML = '';
@@ -1064,6 +1147,8 @@
       if (p) setTodSelection(p.tod);
     }
   });
+  const paxsel = $('paxfilter');
+  if (paxsel) paxsel.addEventListener('change', () => setPaxFilter(paxsel.value));
   const heatBox = $('heatmap');
   if (heatBox) {
     if (!L.heatLayer) { heatBox.disabled = true; heatBox.parentNode.append(' (unavailable)'); }
@@ -1139,7 +1224,7 @@
     const url = btn.getAttribute('data-share-url');
     if (url) shareLink(url, btn.getAttribute('aria-label') || 'Shared link');
   });
-  window.__site = { setPick, select, hits: () => lastHits, setAllTracks, drawAllTracks, setColorMode: m => { colorMode = m === 'year' ? 'year' : 'single'; applyColorChange(); }, colorMode: () => colorMode, allOn: () => allOn, setYearSelection, yearsOn: () => [...yearsOn].sort((a, b) => a - b), yearMenuLabel, setYearMenuOpen, yearMenuOpen: () => !!( $('yeargroup') && $('yeargroup').classList.contains('open') ), setMonthSelection, monthsOn: () => [...monthsOn].sort((a, b) => a - b), setTodSelection, todOn: () => [...todOn], setHeat, heatOn: () => heatOn, applyFilters, resetFilters, visible, filtered: filteredFlights, statsEl: () => ($('stats') && $('stats').textContent), filterCount: activeFilterCount, openLightbox, closeLightbox, nearestPin, showPhotoFlight, showPhotoAt: (la, lo) => { const hit = nearestPin(L.latLng(la, lo)); if (hit) showPhotoFlight(hit.m); return hit && { d: hit.d, kind: hit.m._ppc && hit.m._ppc.kind, id: ((hit.m._ppc.flights||[])[0]||{}).id }; }, nearestTrack, selectTrackFromMap, listSelectedYearFlights, browseAll: () => browseAll, selectTrackAt: (la, lo) => { const t = nearestTrack(L.latLng(la, lo)); if (t) selectTrackFromMap(t.f); return t && { d: t.d, id: t.f.id }; }, openFlightLink, applyHash, flightShareUrl, shareLink, locateMe, lastCopied: () => lastCopied, hereMarker: () => hereMarker, onlyThis: () => onlyThis, setOnlyThis, showBestOf: () => SHOW_BEST_OF, heatCount: () => (heatLayer && heatLayer._latlngs && heatLayer._latlngs.length) || 0 };
+  window.__site = { setPick, select, hits: () => lastHits, setAllTracks, drawAllTracks, setColorMode: m => { colorMode = m === 'year' ? 'year' : 'single'; applyColorChange(); }, colorMode: () => colorMode, allOn: () => allOn, setYearSelection, yearsOn: () => [...yearsOn].sort((a, b) => a - b), yearMenuLabel, setYearMenuOpen, yearMenuOpen: () => !!( $('yeargroup') && $('yeargroup').classList.contains('open') ), setMonthSelection, monthsOn: () => [...monthsOn].sort((a, b) => a - b), setTodSelection, todOn: () => [...todOn], setHeat, heatOn: () => heatOn, applyFilters, resetFilters, visible, filtered: filteredFlights, statsEl: () => ($('stats') && $('stats').textContent), filterCount: activeFilterCount, paxFilter: () => paxFilter, setPaxFilter, paxCounts, openLightbox, closeLightbox, nearestPin, showPhotoFlight, showPhotoAt: (la, lo) => { const hit = nearestPin(L.latLng(la, lo)); if (hit) showPhotoFlight(hit.m); return hit && { d: hit.d, kind: hit.m._ppc && hit.m._ppc.kind, id: ((hit.m._ppc.flights||[])[0]||{}).id }; }, nearestTrack, selectTrackFromMap, listSelectedYearFlights, browseAll: () => browseAll, selectTrackAt: (la, lo) => { const t = nearestTrack(L.latLng(la, lo)); if (t) selectTrackFromMap(t.f); return t && { d: t.d, id: t.f.id }; }, openFlightLink, applyHash, flightShareUrl, shareLink, locateMe, lastCopied: () => lastCopied, hereMarker: () => hereMarker, onlyThis: () => onlyThis, setOnlyThis, showBestOf: () => SHOW_BEST_OF, heatCount: () => (heatLayer && heatLayer._latlngs && heatLayer._latlngs.length) || 0 };
   renderFilterChips();
   syncColorUi();
 })();
