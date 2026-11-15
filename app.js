@@ -50,6 +50,23 @@
     }
   });
   map.addControl(new LocateCtl());
+  const FS_EXPAND = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>';
+  const FS_COLLAPSE = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg>';
+  let mapOnly = false, fsBtn = null;
+  const FullscreenCtl = L.Control.extend({
+    options: { position: 'topleft' },
+    onAdd: function () {
+      const d = L.DomUtil.create('div', 'leaflet-bar leaflet-control ppc-fs');
+      const a = L.DomUtil.create('a', '', d);
+      a.href = '#'; a.role = 'button';
+      fsBtn = a;
+      updateFsButton();
+      L.DomEvent.disableClickPropagation(d);
+      L.DomEvent.on(a, 'click', ev => { L.DomEvent.preventDefault(ev); toggleMapOnly(); });
+      return d;
+    }
+  });
+  map.addControl(new FullscreenCtl());
   const legend = L.control({ position: 'bottomleft' });
   legend.onAdd = function () {
     const d = L.DomUtil.create('div', 'best-legend');
@@ -428,6 +445,93 @@
     try { history.replaceState(null, '', s); } catch (_) {}
     setTimeout(() => { ignoreHash = false; }, 0);
   }
+  function canNativeFullscreen() {
+    if (/iPhone|iPod/i.test(navigator.userAgent)) return false;
+    const el = document.documentElement;
+    return !!(document.fullscreenEnabled || document.webkitFullscreenEnabled) &&
+      typeof (el.requestFullscreen || el.webkitRequestFullscreen) === 'function';
+  }
+  function isNativeFullscreen() {
+    return !!(document.fullscreenElement || document.webkitFullscreenElement);
+  }
+  function enterNativeFullscreen() {
+    const el = document.documentElement;
+    const fn = el.requestFullscreen || el.webkitRequestFullscreen;
+    return fn ? Promise.resolve(fn.call(el)) : Promise.reject();
+  }
+  function exitNativeFullscreen() {
+    const fn = document.exitFullscreen || document.webkitExitFullscreen;
+    return fn ? Promise.resolve(fn.call(document)) : Promise.resolve();
+  }
+  function resizeMap() {
+    const go = () => { try { map.invalidateSize({ animate: false }); } catch (_) {} };
+    requestAnimationFrame(() => { go(); requestAnimationFrame(go); });
+    setTimeout(go, 250);
+  }
+  function fitPad(extra) {
+    const base = extra && extra.maxZoom != null ? { maxZoom: extra.maxZoom } : { maxZoom: 14 };
+    if (mapOnly && document.body.classList.contains('sheet-open')) {
+      const h = map.getSize().y || window.innerHeight;
+      return Object.assign(base, { paddingTopLeft: [24, 24], paddingBottomRight: [24, Math.round(Math.min(h * 0.42, 320)) + 24] });
+    }
+    return Object.assign(base, { padding: [24, 24] });
+  }
+  function updateFsButton() {
+    if (!fsBtn) return;
+    const on = mapOnly || isNativeFullscreen();
+    fsBtn.innerHTML = on ? FS_COLLAPSE : FS_EXPAND;
+    fsBtn.title = on ? 'Exit full screen' : 'Full screen';
+    fsBtn.setAttribute('aria-label', on ? 'Exit full screen' : 'Full screen');
+    fsBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+  function syncMapOnlySheet() {
+    if (!mapOnly) return;
+    const want = !!(pick || selId);
+    document.body.classList.toggle('sheet-open', want);
+    resizeMap();
+  }
+  function closeMapOnlySheet() {
+    document.body.classList.remove('sheet-open');
+    resizeMap();
+  }
+  function setMapOnly(on, opts) {
+    on = !!on;
+    const skipNative = !!(opts && opts.skipNative);
+    if (mapOnly === on) {
+      if (on && !skipNative && canNativeFullscreen() && !isNativeFullscreen()) {
+        enterNativeFullscreen().catch(() => {});
+      }
+      if (!on && !skipNative && isNativeFullscreen()) {
+        exitNativeFullscreen().catch(() => {});
+      }
+      updateFsButton();
+      return;
+    }
+    mapOnly = on;
+    document.body.classList.toggle('map-only', on);
+    if (!on) document.body.classList.remove('sheet-open');
+    updateFsButton();
+    resizeMap();
+    if (on) syncMapOnlySheet();
+    if (skipNative) return;
+    if (on && canNativeFullscreen() && !isNativeFullscreen()) {
+      enterNativeFullscreen().catch(() => {});
+    } else if (!on && isNativeFullscreen()) {
+      exitNativeFullscreen().catch(() => {});
+    }
+  }
+  function toggleMapOnly() { setMapOnly(!mapOnly); }
+  function onFullscreenChange() {
+    const native = isNativeFullscreen();
+    if (!native && mapOnly && canNativeFullscreen()) setMapOnly(false, { skipNative: true });
+    else if (native && !mapOnly) setMapOnly(true, { skipNative: true });
+    updateFsButton();
+    resizeMap();
+  }
+  document.addEventListener('fullscreenchange', onFullscreenChange);
+  document.addEventListener('webkitfullscreenchange', onFullscreenChange);
+  window.addEventListener('resize', () => { if (mapOnly) resizeMap(); });
+  window.addEventListener('orientationchange', () => setTimeout(resizeMap, 300));
   function writeHash(parts) {
     const items = [];
     if (parts.f) items.push('f=' + encodeURIComponent(parts.f));
@@ -655,12 +759,12 @@
     const rM = +$('radius').value * MI;
     if (circle) circle.remove();
     circle = L.circle(pick, { radius: rM, color: '#2f5fb3', weight: 1.5, fillOpacity: 0.06 }).addTo(map);
-    if (fit) map.fitBounds(circle.getBounds(), { maxZoom: 15, padding: [20, 20] });
+    if (fit) map.fitBounds(circle.getBounds(), fitPad({ maxZoom: 15 }));
     resLayer.clearLayers(); hiLayer.clearLayers(); phLayer.clearLayers(); $('results').innerHTML = ''; selId = null;
-    if (inZone(pick[0], pick[1])) { lastHits = []; setStatus('No flight data shown for this area.'); return; }
-    if (!yearsOn.size) { lastHits = []; setStatus('No years selected. Choose a year, or All, to see flights near this spot.'); return; }
-    if (!monthsOn.size) { lastHits = []; setStatus('No months selected. Choose a month or Fall harvest in Filters & layers.'); return; }
-    if (!todOn.size) { lastHits = []; setStatus('No times of day selected. Choose a time in Filters & layers.'); return; }
+    if (inZone(pick[0], pick[1])) { lastHits = []; setStatus('No flight data shown for this area.'); syncMapOnlySheet(); return; }
+    if (!yearsOn.size) { lastHits = []; setStatus('No years selected. Choose a year, or All, to see flights near this spot.'); syncMapOnlySheet(); return; }
+    if (!monthsOn.size) { lastHits = []; setStatus('No months selected. Choose a month or Fall harvest in Filters & layers.'); syncMapOnlySheet(); return; }
+    if (!todOn.size) { lastHits = []; setStatus('No times of day selected. Choose a time in Filters & layers.'); syncMapOnlySheet(); return; }
     const t0 = performance.now();
     lastHits = [];
     for (const f of FL) { if (!visible(f)) continue; const c = closest(f, pick[0], pick[1], rM); if (c) lastHits.push({ f, c }); }
@@ -700,6 +804,7 @@
       f.segs.forEach(g => L.polyline([...g.la].map((a, i) => [a, g.lo[i]]), { color: col, weight: 2, opacity: 0.55, interactive: false }).addTo(resLayer));
     });
     $('results').appendChild(frag);
+    syncMapOnlySheet();
   }
 
   function select(id, opts) {
@@ -730,10 +835,11 @@
     if (fit && lines.length) {
       const b = L.featureGroup(lines).getBounds();
       if (pick) b.extend(pick);
-      map.fitBounds(b, { padding: [24, 24], maxZoom: 14 });
-      if (window.innerWidth < 800) $('map').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      map.fitBounds(b, fitPad({ maxZoom: 14 }));
+      if (window.innerWidth < 800 && !mapOnly) $('map').scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
     applyOnlyThis();
+    syncMapOnlySheet();
   }
   function applyOnlyThis() {
     const hide = !!(onlyThis && selId);
@@ -1037,6 +1143,7 @@
     $('results').appendChild(frag);
     setStatus(status);
     if (flights[0]) select(flights[0].id, opts);
+    else syncMapOnlySheet();
   }
   function showPhotoFlight(m) {
     const info = (m && m._ppc) || {};
@@ -1147,6 +1254,8 @@
       if (p) setTodSelection(p.tod);
     }
   });
+  const sheetclose = $('sheetclose');
+  if (sheetclose) sheetclose.addEventListener('click', ev => { ev.preventDefault(); ev.stopPropagation(); closeMapOnlySheet(); });
   const paxsel = $('paxfilter');
   if (paxsel) paxsel.addEventListener('change', () => setPaxFilter(paxsel.value));
   const heatBox = $('heatmap');
@@ -1207,8 +1316,11 @@
   });
   document.addEventListener('keydown', e => {
     if (e.key !== 'Escape') return;
-    closeLightbox();
+    const lb = document.getElementById('lightbox');
+    if (lb && !lb.hidden) { closeLightbox(); return; }
     setYearMenuOpen(false);
+    if (mapOnly && document.body.classList.contains('sheet-open')) { closeMapOnlySheet(); return; }
+    if (mapOnly) setMapOnly(false);
   });
   document.addEventListener('click', e => {
     const btn = e.target.closest('[data-share], [data-share-url]');
@@ -1224,7 +1336,7 @@
     const url = btn.getAttribute('data-share-url');
     if (url) shareLink(url, btn.getAttribute('aria-label') || 'Shared link');
   });
-  window.__site = { setPick, select, hits: () => lastHits, setAllTracks, drawAllTracks, setColorMode: m => { colorMode = m === 'year' ? 'year' : 'single'; applyColorChange(); }, colorMode: () => colorMode, allOn: () => allOn, setYearSelection, yearsOn: () => [...yearsOn].sort((a, b) => a - b), yearMenuLabel, setYearMenuOpen, yearMenuOpen: () => !!( $('yeargroup') && $('yeargroup').classList.contains('open') ), setMonthSelection, monthsOn: () => [...monthsOn].sort((a, b) => a - b), setTodSelection, todOn: () => [...todOn], setHeat, heatOn: () => heatOn, applyFilters, resetFilters, visible, filtered: filteredFlights, statsEl: () => ($('stats') && $('stats').textContent), filterCount: activeFilterCount, paxFilter: () => paxFilter, setPaxFilter, paxCounts, openLightbox, closeLightbox, nearestPin, showPhotoFlight, showPhotoAt: (la, lo) => { const hit = nearestPin(L.latLng(la, lo)); if (hit) showPhotoFlight(hit.m); return hit && { d: hit.d, kind: hit.m._ppc && hit.m._ppc.kind, id: ((hit.m._ppc.flights||[])[0]||{}).id }; }, nearestTrack, selectTrackFromMap, listSelectedYearFlights, browseAll: () => browseAll, selectTrackAt: (la, lo) => { const t = nearestTrack(L.latLng(la, lo)); if (t) selectTrackFromMap(t.f); return t && { d: t.d, id: t.f.id }; }, openFlightLink, applyHash, flightShareUrl, shareLink, locateMe, lastCopied: () => lastCopied, hereMarker: () => hereMarker, onlyThis: () => onlyThis, setOnlyThis, showBestOf: () => SHOW_BEST_OF, heatCount: () => (heatLayer && heatLayer._latlngs && heatLayer._latlngs.length) || 0 };
+  window.__site = { setPick, select, hits: () => lastHits, setAllTracks, drawAllTracks, setColorMode: m => { colorMode = m === 'year' ? 'year' : 'single'; applyColorChange(); }, colorMode: () => colorMode, allOn: () => allOn, setYearSelection, yearsOn: () => [...yearsOn].sort((a, b) => a - b), yearMenuLabel, setYearMenuOpen, yearMenuOpen: () => !!( $('yeargroup') && $('yeargroup').classList.contains('open') ), setMonthSelection, monthsOn: () => [...monthsOn].sort((a, b) => a - b), setTodSelection, todOn: () => [...todOn], setHeat, heatOn: () => heatOn, applyFilters, resetFilters, visible, filtered: filteredFlights, statsEl: () => ($('stats') && $('stats').textContent), filterCount: activeFilterCount, paxFilter: () => paxFilter, setPaxFilter, paxCounts, openLightbox, closeLightbox, nearestPin, showPhotoFlight, showPhotoAt: (la, lo) => { const hit = nearestPin(L.latLng(la, lo)); if (hit) showPhotoFlight(hit.m); return hit && { d: hit.d, kind: hit.m._ppc && hit.m._ppc.kind, id: ((hit.m._ppc.flights||[])[0]||{}).id }; }, nearestTrack, selectTrackFromMap, listSelectedYearFlights, browseAll: () => browseAll, selectTrackAt: (la, lo) => { const t = nearestTrack(L.latLng(la, lo)); if (t) selectTrackFromMap(t.f); return t && { d: t.d, id: t.f.id }; }, openFlightLink, applyHash, flightShareUrl, shareLink, locateMe, lastCopied: () => lastCopied, hereMarker: () => hereMarker, onlyThis: () => onlyThis, setOnlyThis, showBestOf: () => SHOW_BEST_OF, mapOnly: () => mapOnly, setMapOnly, canNativeFullscreen, closeMapOnlySheet, heatCount: () => (heatLayer && heatLayer._latlngs && heatLayer._latlngs.length) || 0 };
   renderFilterChips();
   syncColorUi();
 })();

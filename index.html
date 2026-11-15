@@ -9,6 +9,11 @@
 <link rel="icon" href="favicon.ico" sizes="any">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="PPC Flyover">
+<meta name="theme-color" content="#17305f">
 <meta property="og:title" content="Powered Parachute Flyover Map">
 <meta property="og:description" content="Did Scott fly over you? Use your location or tap the map to see which of Scott Richardson's powered parachute flights (2015–2026) passed nearby.">
 <meta property="og:image" content="https://scottrichardsonppc.github.io/map-4958aebhxyrb/og.jpg?v=3">
@@ -99,6 +104,10 @@
 <main>
   <div id="map" role="application" aria-label="Map. Tap to choose a spot."></div>
   <section id="panel" aria-live="polite">
+    <div class="sheet-grab" id="sheetbar">
+      <span class="sheet-handle" aria-hidden="true"></span>
+      <button type="button" id="sheetclose" class="sheet-close">Close</button>
+    </div>
     <div id="status" class="status">Loading flight data…</div>
     <ol id="results"></ol>
   </section>
